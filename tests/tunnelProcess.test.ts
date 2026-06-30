@@ -34,14 +34,77 @@ describe('startCloudflared', () => {
 
   it('waits for the edge to become reachable before surfacing the url', async () => {
     const fake = writeFake();
-    let probes = 0;
-    const handle = await startCloudflared(process.execPath, 0, {
-      extraArgs: [fake], intervalMs: 10, attempts: 5,
-      healthCheck: async () => ++probes >= 3, // unhealthy twice, then healthy
-    });
-    expect(probes).toBeGreaterThanOrEqual(3);
-    expect(handle.publicUrl).toBe('https://fake-tunnel-1.trycloudflare.com');
-    handle.stop();
-    fs.rmSync(fake);
+    try {
+      let probes = 0;
+      const handle = await startCloudflared(process.execPath, 0, {
+        extraArgs: [fake], intervalMs: 10, attempts: 5,
+        healthCheck: async () => ++probes >= 3, // unhealthy twice, then healthy
+      });
+      expect(probes).toBeGreaterThanOrEqual(3);
+      expect(handle.publicUrl).toBe('https://fake-tunnel-1.trycloudflare.com');
+      handle.stop();
+    } finally {
+      fs.rmSync(fake);
+    }
+  });
+
+  it('rejects (without hanging) when the edge is never reachable', async () => {
+    const fake = writeFake();
+    try {
+      await expect(
+        startCloudflared(process.execPath, 0, {
+          extraArgs: [fake], intervalMs: 5, attempts: 3,
+          healthCheck: async () => false,
+        }),
+      ).rejects.toThrow(/never became reachable/);
+    } finally {
+      fs.rmSync(fake);
+    }
+  });
+
+  it('treats a throwing health-check as a failed attempt and still rejects', async () => {
+    const fake = writeFake();
+    try {
+      await expect(
+        startCloudflared(process.execPath, 0, {
+          extraArgs: [fake], intervalMs: 5, attempts: 3,
+          healthCheck: async () => { throw new Error('boom'); },
+        }),
+      ).rejects.toThrow(/never became reachable/);
+    } finally {
+      fs.rmSync(fake);
+    }
+  });
+
+  it('treats a hanging health-check as a failed attempt and rejects within a bounded time (no half-open state)', async () => {
+    const fake = writeFake();
+    try {
+      const start = Date.now();
+      await expect(
+        startCloudflared(process.execPath, 0, {
+          extraArgs: [fake], intervalMs: 5, attempts: 3, probeTimeoutMs: 20,
+          healthCheck: () => new Promise(() => { /* never resolves */ }),
+        }),
+      ).rejects.toThrow(/never became reachable/);
+      // 3 attempts * (20ms probe timeout + 5ms interval) plus slack — well under
+      // vitest's default test timeout, proving the loop can't hang forever.
+      expect(Date.now() - start).toBeLessThan(2000);
+    } finally {
+      fs.rmSync(fake);
+    }
+  });
+
+  it('rejects when cloudflared never reports a url in time', async () => {
+    const fake = path.join(
+      os.tmpdir(), `fake-cf-nourl-${Date.now()}-${Math.round(performance.now())}.mjs`,
+    );
+    fs.writeFileSync(fake, `console.error('INF starting tunnel'); setInterval(()=>{}, 1000);`);
+    try {
+      await expect(
+        startCloudflared(process.execPath, 0, { extraArgs: [fake], timeoutMs: 100 }),
+      ).rejects.toThrow(/did not report a URL in time/);
+    } finally {
+      fs.rmSync(fake);
+    }
   });
 });
