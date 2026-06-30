@@ -30,6 +30,9 @@ export class HostRelay extends EventEmitter {
     this.server = http.createServer();
     this.wss = new WebSocketServer({ server: this.server, path: `/t/${opts.tunnelId}` });
     this.wss.on('connection', (ws) => this.onConnection(ws));
+    // A routine socket-level error (e.g. ECONNRESET on a flaky tunnel hop)
+    // must never crash the host process.
+    this.wss.on('error', (err) => { console.error('[tunnel] relay server error:', err); });
   }
 
   start(): Promise<number> {
@@ -81,33 +84,59 @@ export class HostRelay extends EventEmitter {
     ws.send(encodeFrame({ t: 'challenge', nonce }));
 
     ws.on('message', (data) => {
-      let frame: ControlFrame;
-      try { frame = decodeFrame(data.toString()); } catch { return; }
+      // A malformed or schema-invalid frame must never crash the process.
+      // decodeFrame is a blind `as ControlFrame` cast (no runtime
+      // validation), so anything downstream that assumes a field's shape
+      // must be defensively checked here, inside the try/catch.
+      try {
+        let frame: ControlFrame;
+        try { frame = decodeFrame(data.toString()); } catch { return; }
 
-      if (frame.t === 'auth') {
-        const challenge = this.challenges.get(ws);
-        if (!challenge || !verifyChallenge(challenge, frame.response, this.opts.key)) {
-          ws.send(encodeFrame({ t: 'auth_fail', reason: 'bad key' }));
-          ws.close();
-          return;
+        if (frame.t === 'auth') {
+          if (typeof frame.response !== 'string' || typeof frame.name !== 'string') {
+            ws.send(encodeFrame({ t: 'auth_fail', reason: 'malformed auth' }));
+            ws.close();
+            return;
+          }
+          const challenge = this.challenges.get(ws);
+          if (!challenge || !verifyChallenge(challenge, frame.response, this.opts.key)) {
+            ws.send(encodeFrame({ t: 'auth_fail', reason: 'bad key' }));
+            ws.close();
+            return;
+          }
+          if (this.guest && this.guest !== ws && this.guest.readyState === WebSocket.OPEN) {
+            ws.send(encodeFrame({ t: 'auth_fail', reason: 'tunnel full' }));
+            ws.close();
+            return;
+          }
+          this.guest = ws;
+          this.guestName = frame.name;
+          const sinceSeq = Number.isFinite(frame.sinceSeq) ? frame.sinceSeq : 0;
+          ws.send(encodeFrame({
+            t: 'auth_ok',
+            goal: this.opts.goal,
+            peerName: this.opts.hostName,
+            backlog: this.log.since(sinceSeq),
+          }));
+          this.submit(buildSystem('host', `${frame.name} joined`));
+        } else if (frame.t === 'send') {
+          if (ws !== this.guest) return; // only the authenticated guest may send
+          const msg = frame.msg;
+          if (
+            !msg || typeof msg !== 'object'
+            || typeof msg.id !== 'string'
+            || typeof msg.body !== 'string'
+            || !['chat', 'system', 'presence'].includes(msg.kind)
+          ) {
+            return; // ignore malformed send frames
+          }
+          this.submit({ ...msg, from: 'guest', seq: -1, ts: 0 });
         }
-        if (this.guest && this.guest !== ws && this.guest.readyState === WebSocket.OPEN) {
-          ws.send(encodeFrame({ t: 'auth_fail', reason: 'tunnel full' }));
-          ws.close();
-          return;
-        }
-        this.guest = ws;
-        this.guestName = frame.name;
-        ws.send(encodeFrame({
-          t: 'auth_ok',
-          goal: this.opts.goal,
-          peerName: this.opts.hostName,
-          backlog: this.log.since(frame.sinceSeq),
-        }));
-        this.submit(buildSystem('host', `${frame.name} joined`));
-      } else if (frame.t === 'send') {
-        if (ws !== this.guest) return; // only the authenticated guest may send
-        this.submit({ ...frame.msg, from: 'guest', seq: -1, ts: 0 });
+      } catch (err) {
+        // Never let a bad frame (or a downstream throw) crash the host
+        // process. stderr only — stdout is the MCP stdio channel.
+        console.error('[tunnel] relay frame error:', err);
+        return;
       }
     });
 
@@ -117,6 +146,9 @@ export class HostRelay extends EventEmitter {
         this.submit(buildSystem('host', `${this.guestName ?? 'guest'} left`));
       }
     });
+
+    // A routine socket-level error must never crash the process.
+    ws.on('error', (err) => { console.error('[tunnel] relay connection error:', err); });
   }
 
   close(): Promise<void> {
