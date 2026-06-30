@@ -126,9 +126,9 @@ export class HostRelay extends EventEmitter {
             !msg || typeof msg !== 'object'
             || typeof msg.id !== 'string'
             || typeof msg.body !== 'string'
-            || !['chat', 'system', 'presence'].includes(msg.kind)
+            || msg.kind !== 'chat' // a guest may only originate chat; system/presence are host-only events
           ) {
-            return; // ignore malformed send frames
+            return; // ignore malformed or forged send frames
           }
           this.submit({ ...msg, from: 'guest', seq: -1, ts: 0 });
         }
@@ -143,7 +143,11 @@ export class HostRelay extends EventEmitter {
     ws.on('close', () => {
       if (ws === this.guest) {
         this.guest = undefined;
-        this.submit(buildSystem('host', `${this.guestName ?? 'guest'} left`));
+        // During teardown, close() has already terminated this socket and
+        // may have already deleted the session log; don't emit a "left"
+        // event (and don't let this late callback resurrect the log file —
+        // SessionLog.append() is itself a no-op once closed, belt-and-suspenders).
+        if (!this.tearingDown) this.submit(buildSystem('host', `${this.guestName ?? 'guest'} left`));
       }
     });
 

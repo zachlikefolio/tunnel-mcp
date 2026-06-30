@@ -108,14 +108,19 @@ export class TunnelSession {
   }
 
   async say(text: string): Promise<{ seq: number }> {
-    if (!this.role || !this.key) throw new Error('no open tunnel');
+    // Check isOpen (not just log/key, which close() never clears) so a call
+    // after close() throws cleanly instead of risking a crash downstream.
+    if (!this.isOpen || !this.role || !this.key) throw new Error('no open tunnel');
     const msg = buildChat(this.role, text, this.key);
     if (this.role === 'host') return { seq: this.relay!.submitLocal(msg).seq };
     return { seq: await this.guest!.say(msg) };
   }
 
   async listen(sinceSeq: number, timeoutMs = DEFAULT_LISTEN_TIMEOUT_MS): Promise<{ messages: PlainMessage[]; status: SessionStatus }> {
-    if (!this.log || !this.key) throw new Error('no open tunnel');
+    // close() clears role/source but leaves log/key set, so this must check
+    // isOpen/source (not log/key) or a post-close call falls through to
+    // `(this.source as EventEmitter).on(...)` with source === undefined.
+    if (!this.isOpen || !this.source || !this.log || !this.key) throw new Error('no open tunnel');
     const ready = () => this.log!.since(sinceSeq);
     let batch = ready();
     if (batch.length === 0) {
