@@ -96,6 +96,20 @@ describe('TunnelSession (host <-> guest, fake cloudflared)', () => {
     expect(opened.joinLink).toContain('/t/');
   });
 
+  it('listen() and say() throw a clean error after close() instead of crashing', async () => {
+    const host = new TunnelSession(fakeDeps({}));
+    sessions.push(host);
+    await host.open('goal', 'alice');
+    await host.close('done');
+
+    // close() clears role/source but historically left log/key set, so a
+    // post-close listen() fell through to `(this.source as
+    // EventEmitter).on(...)` with source === undefined and threw a raw
+    // TypeError instead of a clean domain error.
+    await expect(host.listen(0, 50)).rejects.toThrow('no open tunnel');
+    await expect(host.say('hello')).rejects.toThrow('no open tunnel');
+  });
+
   it('fails cleanly with a readable error after exhausting retries', async () => {
     let calls = 0;
     const host = new TunnelSession({

@@ -51,8 +51,11 @@ destroyed.
 
 ## Security model
 
-- **End-to-end encrypted:** chat bodies are sealed with libsodium secretbox; the
-  `cloudflared` pipe sees only ciphertext.
+- **End-to-end encrypted:** chat **message bodies** are sealed with NaCl
+  secretbox (XSalsa20-Poly1305, via tweetnacl); the `cloudflared` pipe sees
+  only ciphertext for chat. The join `goal`, both display names, and all
+  `system` text (joined/left/idle/closed) are sent in cleartext and are
+  visible to the relay path.
 - **Auth by key possession:** the join link's key is proven via HMAC challenge,
   never sent over the wire. First valid guest locks the session (exactly 2 people).
 - **Untrusted peer:** the etiquette skill makes your agent treat peer messages as

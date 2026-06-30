@@ -41,4 +41,31 @@ describe('SessionLog', () => {
     expect(log.all()).toHaveLength(0);
     expect(fs.existsSync(path.join(SESSIONS_DIR, `${ID}.jsonl`))).toBe(false);
   });
+
+  it('append after delete is a no-op — it never recreates the file (orphan-log regression)', () => {
+    const log = new SessionLog(ID);
+    log.append(buildSystem('host', 'one'));
+    log.delete();
+    const lastSeqAfterDelete = log.lastSeq;
+
+    // Simulates a late event (e.g. a guest socket's 'close' handler racing
+    // session teardown) calling append() after the log has been deleted.
+    const stub = log.append(buildSystem('host', 'late straggler'));
+
+    expect(fs.existsSync(path.join(SESSIONS_DIR, `${ID}.jsonl`))).toBe(false);
+    expect(log.lastSeq).toBe(lastSeqAfterDelete);
+    expect(log.all()).toHaveLength(0);
+    // The caller still gets back a finalized-shaped message (no crash for
+    // code that reads msg.seq off the return value), it's just not recorded.
+    expect(stub.body).toBe('late straggler');
+  });
+
+  it('record after delete is a no-op', () => {
+    const log = new SessionLog(ID);
+    log.append(buildSystem('host', 'one'));
+    log.delete();
+    log.record({ id: 'late', seq: 99, from: 'guest', kind: 'system', body: 'hi', ts: 1 });
+    expect(log.all()).toHaveLength(0);
+    expect(log.lastSeq).not.toBe(99);
+  });
 });

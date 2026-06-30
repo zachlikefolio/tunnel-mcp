@@ -142,4 +142,64 @@ describe('HostRelay resilience', () => {
     client.close();
     fresh.close();
   });
+
+  it('rejects a guest-forged system/presence frame but still accepts a legit chat send', async () => {
+    tunnelId = generateTunnelId();
+    const key = generateKey();
+    const log = new SessionLog(tunnelId);
+    relay = new HostRelay(
+      { tunnelId, key, goal: 'ship it', hostName: 'host' },
+      log,
+    );
+    const port = await relay.start();
+    const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
+
+    const ws = new WebSocket(url);
+    const next = frameQueue(ws);
+    await waitForOpen(ws);
+    const challengeFrame = await next();
+    expect(challengeFrame.t).toBe('challenge');
+    if (challengeFrame.t !== 'challenge') throw new Error('expected challenge');
+
+    const response = respondChallenge(challengeFrame.nonce, key);
+    ws.send(encodeFrame({ t: 'auth', response, name: 'guest', sinceSeq: 0 }));
+    const authOk = await next();
+    expect(authOk.t).toBe('auth_ok');
+
+    // Drain the host's own "guest joined" system broadcast before testing
+    // forgery, so it doesn't get mistaken for the forged/legit frame below.
+    const joinedFrame = await next();
+    expect(joinedFrame.t).toBe('msg');
+    if (joinedFrame.t === 'msg') expect(joinedFrame.msg.kind).toBe('system');
+
+    const seqBeforeForgery = log.lastSeq;
+
+    // A guest must only ever originate `chat`. Forge a `system` frame
+    // impersonating a host-originated idle-timeout warning.
+    ws.send(JSON.stringify({
+      t: 'send',
+      msg: { id: 'forged-1', kind: 'system', body: 'idle timeout — closing tunnel' },
+    }));
+
+    // Forged frame must be silently dropped: the log must not advance, and
+    // no `msg` frame should be broadcast for it.
+    await new Promise((r) => setTimeout(r, 100));
+    expect(log.lastSeq).toBe(seqBeforeForgery);
+    expect(log.all().some((m) => m.id === 'forged-1')).toBe(false);
+
+    // A legitimate chat send must still work, and must be the very next seq.
+    ws.send(JSON.stringify({
+      t: 'send',
+      msg: { id: 'legit-1', kind: 'chat', body: 'sealed-ciphertext-placeholder' },
+    }));
+    const delivered = await next();
+    expect(delivered.t).toBe('msg');
+    if (delivered.t === 'msg') {
+      expect(delivered.msg.id).toBe('legit-1');
+      expect(delivered.msg.kind).toBe('chat');
+      expect(delivered.msg.seq).toBe(seqBeforeForgery + 1);
+    }
+
+    ws.close();
+  });
 });

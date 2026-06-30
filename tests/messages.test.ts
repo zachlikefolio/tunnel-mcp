@@ -25,4 +25,19 @@ describe('messages', () => {
     const frame: ControlFrame = { t: 'challenge', nonce: 'abc' };
     expect(decodeFrame(encodeFrame(frame))).toEqual(frame);
   });
+
+  it('decrypt() is total — a malformed chat body returns [unreadable] instead of throwing', () => {
+    const key = generateKey();
+    const malformed = {
+      id: 'x', seq: 1, from: 'guest' as const, kind: 'chat' as const,
+      body: 'not-valid-ciphertext', ts: Date.now(),
+    };
+    expect(() => decrypt(malformed, key)).not.toThrow();
+    const result = decrypt(malformed, key);
+    expect(result.text).toBe('[unreadable]');
+    expect(result.id).toBe('x');
+    expect(result.seq).toBe(1);
+    expect(result.from).toBe('guest');
+    expect(result.kind).toBe('chat');
+  });
 });

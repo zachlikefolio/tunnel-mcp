@@ -34,8 +34,20 @@ export function buildSystem(from: Role, text: string): WireMessage {
   return { id: newId(), seq: -1, from, kind: 'system', body: text, ts: 0 };
 }
 
+// decrypt() must be TOTAL: a malformed/forged peer chat body must never
+// throw here, or one bad message poisons every listen() batch that includes
+// it (the untrusted guest could otherwise deny the host's receive loop).
 export function decrypt(msg: WireMessage, key: Key): PlainMessage {
-  const text = msg.kind === 'chat' ? open(msg.body, key) : msg.body;
+  let text: string;
+  if (msg.kind === 'chat') {
+    try {
+      text = open(msg.body, key);
+    } catch {
+      text = '[unreadable]';
+    }
+  } else {
+    text = msg.body;
+  }
   return { id: msg.id, seq: msg.seq, from: msg.from, kind: msg.kind, text, ts: msg.ts };
 }
 
