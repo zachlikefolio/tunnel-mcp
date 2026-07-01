@@ -11,6 +11,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet.
 
+## [0.1.2] - 2026-07-01
+
+### Added
+
+- **`install-skill` command and automatic skill install.** `tunnel-mcp
+install-skill` copies the `tunnel-etiquette` skill into `~/.claude/skills`
+  (override with `--dir`/`$TUNNEL_SKILLS_DIR`, overwrite with `--force`), and a
+  global `npm install` now installs it best-effort via a postinstall script.
+  Set `TUNNEL_SKIP_SKILL_INSTALL=1` to opt out; the postinstall never fails an
+  install and is a no-op under `npx`, `--ignore-scripts`, and CI.
+- **`--help` and `--version` flags**, plus a one-line stderr startup banner, so
+  running the server by hand no longer looks like a silent hang. The server also
+  hints how to install the etiquette skill when it isn't present.
+- **`TUNNEL_SKIP_REACHABILITY_CHECK` escape hatch.** Opens a tunnel even when the
+  host can't reach `*.trycloudflare.com` itself — useful when only the guest's
+  network needs to reach the URL.
+
+### Fixed
+
+- The MCP server reported a hardcoded, stale version (`0.1.0`) in its handshake;
+  it now reports the real package version.
+- A failed cloudflared reachability probe surfaced a generic "never became
+  reachable" error. It now names the host and, when the failure is DNS
+  resolution, points at `*.trycloudflare.com` being blocked (a common
+  corporate/filtered-DNS cause) and mentions the escape hatch above.
+
 ## [0.1.1] - 2026-07-01
 
 ### Security
@@ -54,5 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declaring a fix "confirmed".
 - Test suite of 109 tests built with vitest, developed test-first (TDD).
 
-[Unreleased]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/zachlikefolio/tunnel-mcp/releases/tag/v0.1.0

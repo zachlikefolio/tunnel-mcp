@@ -2,7 +2,12 @@ import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import { parsePublicUrl, startCloudflared } from '../src/cloudflared/tunnelProcess.js';
+import {
+  parsePublicUrl,
+  startCloudflared,
+  unreachableMessage,
+  describeProbeError,
+} from '../src/cloudflared/tunnelProcess.js';
 
 describe('parsePublicUrl', () => {
   it('extracts a trycloudflare url from a log line', () => {
@@ -119,6 +124,42 @@ describe('startCloudflared', () => {
     }
   });
 
+  it('surfaces the reachability escape hatch in the unreachable error', async () => {
+    const fake = writeFake();
+    try {
+      await expect(
+        startCloudflared(process.execPath, 0, {
+          extraArgs: [fake],
+          intervalMs: 5,
+          attempts: 2,
+          healthCheck: async () => false,
+        }),
+      ).rejects.toThrow(/TUNNEL_SKIP_REACHABILITY_CHECK/);
+    } finally {
+      fs.rmSync(fake);
+    }
+  });
+
+  it('skipHealthCheck resolves with the url without probing', async () => {
+    const fake = writeFake();
+    try {
+      let probed = false;
+      const handle = await startCloudflared(process.execPath, 0, {
+        extraArgs: [fake],
+        skipHealthCheck: true,
+        healthCheck: async () => {
+          probed = true;
+          return false; // would fail if it were consulted
+        },
+      });
+      expect(handle.publicUrl).toBe('https://fake-tunnel-1.trycloudflare.com');
+      expect(probed).toBe(false);
+      handle.stop();
+    } finally {
+      fs.rmSync(fake);
+    }
+  });
+
   it('rejects when cloudflared never reports a url in time', async () => {
     const fake = path.join(
       os.tmpdir(),
@@ -147,6 +188,34 @@ describe('startCloudflared', () => {
     } finally {
       fs.rmSync(fake);
     }
+  });
+
+  it('unreachableMessage adds a DNS hint for a resolution failure, but not otherwise', () => {
+    const url = 'https://blue-cat-42.trycloudflare.com';
+    const dns = unreachableMessage(
+      url,
+      3,
+      'ENOTFOUND: getaddrinfo ENOTFOUND blue-cat-42.trycloudflare.com',
+    );
+    expect(dns).toMatch(/never became reachable/);
+    expect(dns).toContain('blue-cat-42.trycloudflare.com');
+    expect(dns.toLowerCase()).toContain('resolve');
+    expect(dns).toContain('*.trycloudflare.com');
+    expect(dns).toContain('TUNNEL_SKIP_REACHABILITY_CHECK');
+
+    const other = unreachableMessage(url, 3, 'ECONNREFUSED');
+    expect(other).toMatch(/never became reachable/);
+    expect(other).toContain('TUNNEL_SKIP_REACHABILITY_CHECK');
+    expect(other.toLowerCase()).not.toContain('blocking');
+  });
+
+  it('describeProbeError extracts the underlying cause code (undici wraps DNS errors)', () => {
+    const reason = describeProbeError({
+      name: 'TypeError',
+      message: 'fetch failed',
+      cause: { code: 'ENOTFOUND', message: 'getaddrinfo ENOTFOUND host' },
+    });
+    expect(reason).toContain('ENOTFOUND');
   });
 
   it('rejects via the error event when spawning a non-existent binary path', async () => {

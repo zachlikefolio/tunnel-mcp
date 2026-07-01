@@ -20,6 +20,7 @@ import {
   DEFAULT_JOIN_LINK_TTL_MS,
   OPEN_RETRY_ATTEMPTS,
 } from './config.js';
+import { envFlag } from './env.js';
 
 export interface SessionDeps {
   ensureCloudflared: () => Promise<string>;
@@ -38,7 +39,14 @@ export interface SessionStatus {
 
 const DEFAULT_DEPS: SessionDeps = {
   ensureCloudflared: realEnsure,
-  startCloudflared: (bin, port) => realStart(bin, port),
+  // Read the escape hatch per-call (not at module load) so it can be set right
+  // before opening a tunnel.
+  startCloudflared: (bin, port) =>
+    realStart(
+      bin,
+      port,
+      envFlag('TUNNEL_SKIP_REACHABILITY_CHECK') ? { skipHealthCheck: true } : {},
+    ),
 };
 
 export class TunnelSession {

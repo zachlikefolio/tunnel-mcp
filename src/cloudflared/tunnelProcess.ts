@@ -17,6 +17,7 @@ export interface StartOptions {
   intervalMs?: number; // delay between probes
   healthCheck?: (url: string) => Promise<boolean>; // default: HTTP reachability
   probeTimeoutMs?: number; // per-attempt budget for a health probe
+  skipHealthCheck?: boolean; // bypass the probe (host DNS blocked but guest resolves)
 }
 
 const URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
@@ -25,48 +26,98 @@ const URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
 // healthCheck that hangs/throws) can't stall the health-check loop forever.
 const DEFAULT_PROBE_TIMEOUT_MS = 5000;
 
+interface ProbeResult {
+  ok: boolean;
+  reason?: string; // why the last probe failed (surfaced in the error)
+}
+
 export function parsePublicUrl(line: string): string | null {
   const m = line.match(URL_RE);
   return m ? m[0] : null;
 }
 
-// Any HTTP response (even 404/502/426) means the Cloudflare edge is routing to us.
-export async function defaultHealthCheck(url: string): Promise<boolean> {
+// undici (Node's global fetch) reports the real network error on `.cause`, e.g.
+// a DNS failure surfaces as `cause.code === 'ENOTFOUND'`. Pull that out so the
+// caller can tell "DNS can't resolve the host" apart from "edge not ready yet".
+export function describeProbeError(e: unknown): string {
+  const err = e as { name?: string; message?: string; cause?: { code?: string; message?: string } };
+  const code = err?.cause?.code;
+  if (code) return err.cause?.message ? `${code}: ${err.cause.message}` : code;
+  if (err?.name === 'TimeoutError') return 'probe timed out';
+  return err?.message || 'unknown error';
+}
+
+// Any HTTP response (even 404/502/426) means the Cloudflare edge is routing to
+// us. A thrown error carries why it failed (DNS, TLS, refused, timeout).
+async function reachabilityProbe(url: string, probeTimeoutMs: number): Promise<ProbeResult> {
   try {
-    await fetch(url, { method: 'GET', signal: AbortSignal.timeout(DEFAULT_PROBE_TIMEOUT_MS) });
-    return true;
-  } catch {
-    return false; // network/DNS error/timeout → edge not ready yet
+    await fetch(url, { method: 'GET', signal: AbortSignal.timeout(probeTimeoutMs) });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: describeProbeError(e) };
   }
 }
 
-// Races a single health-check attempt against a per-attempt timeout so that a
-// caller-supplied `check` that throws, rejects, or simply never resolves can
-// never leave the loop (and therefore the outer startCloudflared promise)
-// hanging. Any failure mode here just counts as "not healthy yet".
+// Back-compat boolean probe (kept for external callers/tests).
+export async function defaultHealthCheck(url: string): Promise<boolean> {
+  return (await reachabilityProbe(url, DEFAULT_PROBE_TIMEOUT_MS)).ok;
+}
+
+// Builds the actionable "never became reachable" error. Names the host and,
+// when the failure looks like DNS resolution, points at *.trycloudflare.com
+// blocking — the single most common real-world cause. Always mentions the
+// escape hatch, since the guest's network (not the host's) is what must reach
+// the URL for messaging.
+export function unreachableMessage(url: string, attempts: number, lastReason?: string): string {
+  let host = url;
+  try {
+    host = new URL(url).host;
+  } catch {
+    /* keep the raw url */
+  }
+  const dnsish = !!lastReason && /ENOTFOUND|EAI_AGAIN|getaddrinfo|\bdns\b/i.test(lastReason);
+  let msg = `cloudflared reported ${url} but it never became reachable from this machine after ${attempts} probe(s)`;
+  if (lastReason) msg += ` (last error: ${lastReason})`;
+  msg += '.';
+  if (dnsish) {
+    msg +=
+      ` This machine can't resolve ${host} — your DNS or network may be blocking *.trycloudflare.com` +
+      ` (common on filtered/corporate networks and some public DNS resolvers). You and your guest both` +
+      ` need to be able to resolve it.`;
+  }
+  msg += ` If you're confident your guest's network can reach the URL, set TUNNEL_SKIP_REACHABILITY_CHECK=1 to open the tunnel anyway.`;
+  return msg;
+}
+
+// Races a single probe against a per-attempt timeout so that a caller-supplied
+// `check` that throws, rejects, or simply never resolves can never leave the
+// loop (and therefore the outer startCloudflared promise) hanging.
 function probeOnce(
   url: string,
-  check: (u: string) => Promise<boolean>,
+  probe: (u: string) => Promise<ProbeResult>,
   probeTimeoutMs: number,
-): Promise<boolean> {
+): Promise<ProbeResult> {
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (ok: boolean) => {
+    const finish = (r: ProbeResult) => {
       if (!settled) {
         settled = true;
-        resolve(ok);
+        resolve(r);
       }
     };
-    const timer = setTimeout(() => finish(false), probeTimeoutMs);
+    const timer = setTimeout(
+      () => finish({ ok: false, reason: 'probe timed out' }),
+      probeTimeoutMs,
+    );
     Promise.resolve()
-      .then(() => check(url))
-      .then((ok) => {
+      .then(() => probe(url))
+      .then((r) => {
         clearTimeout(timer);
-        finish(ok);
+        finish(r);
       })
-      .catch(() => {
+      .catch((err) => {
         clearTimeout(timer);
-        finish(false);
+        finish({ ok: false, reason: describeProbeError(err) });
       });
   });
 }
@@ -75,14 +126,17 @@ async function waitHealthy(
   url: string,
   attempts: number,
   intervalMs: number,
-  check: (u: string) => Promise<boolean>,
+  probe: (u: string) => Promise<ProbeResult>,
   probeTimeoutMs: number,
-): Promise<boolean> {
+): Promise<ProbeResult> {
+  let lastReason: string | undefined;
   for (let i = 0; i < attempts; i++) {
-    if (await probeOnce(url, check, probeTimeoutMs)) return true;
-    await new Promise((r) => setTimeout(r, intervalMs));
+    const r = await probeOnce(url, probe, probeTimeoutMs);
+    if (r.ok) return r;
+    lastReason = r.reason;
+    await new Promise((res) => setTimeout(res, intervalMs));
   }
-  return false;
+  return { ok: false, reason: lastReason };
 }
 
 /**
@@ -100,8 +154,13 @@ export function startCloudflared(
   const timeoutMs = opts.timeoutMs ?? CLOUDFLARED_URL_TIMEOUT_MS;
   const attempts = opts.attempts ?? CLOUDFLARED_HEALTH_ATTEMPTS;
   const intervalMs = opts.intervalMs ?? CLOUDFLARED_HEALTH_INTERVAL_MS;
-  const check = opts.healthCheck ?? defaultHealthCheck;
   const probeTimeoutMs = opts.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
+  // A caller-supplied boolean healthCheck carries no failure reason; the default
+  // probe does. Adapt the former into a ProbeResult either way.
+  const custom = opts.healthCheck;
+  const probe: (u: string) => Promise<ProbeResult> = custom
+    ? async (u) => ({ ok: await custom(u) })
+    : (u) => reachabilityProbe(u, probeTimeoutMs);
 
   return new Promise((resolve, reject) => {
     const child: ChildProcess = spawn(binPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -133,12 +192,19 @@ export function startCloudflared(
         if (url && !settled) {
           settled = true;
           clearTimeout(timer);
-          waitHealthy(url, attempts, intervalMs, check, probeTimeoutMs)
-            .then((ok) => {
-              if (ok) resolve({ publicUrl: url, stop });
+          // Escape hatch: the reachability probe runs on the *host*, but only the
+          // guest's network must reach the URL for messaging. A host on a filtered
+          // network can opt to skip the probe and hand out the link regardless.
+          if (opts.skipHealthCheck) {
+            resolve({ publicUrl: url, stop });
+            return;
+          }
+          waitHealthy(url, attempts, intervalMs, probe, probeTimeoutMs)
+            .then((res) => {
+              if (res.ok) resolve({ publicUrl: url, stop });
               else {
                 stop();
-                reject(new Error('cloudflared tunnel never became reachable'));
+                reject(new Error(unreachableMessage(url, attempts, res.reason)));
               }
             })
             .catch((err) => {

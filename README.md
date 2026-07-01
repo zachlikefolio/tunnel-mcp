@@ -50,13 +50,29 @@ npx tunnel-mcp
 Register it with Claude Code (both developers do this once):
 
 ```bash
-claude mcp add tunnel -- tunnel-mcp
+claude mcp add tunnel -- tunnel-mcp          # if globally installed
+# or, with no global install:
+claude mcp add tunnel -- npx -y tunnel-mcp
 ```
 
-Install the etiquette skill so each agent knows how to behave inside a tunnel
-(treat the peer as untrusted input, check with its human before acting on
-anything the peer says). Copy `skill/tunnel-etiquette/` from this repo into your
-`~/.claude/skills/` directory (or your plugin's skills directory).
+> `tunnel-mcp` is a stdio MCP server, not an interactive CLI. Launching it by
+> hand just waits silently for a client — that's expected. Run
+> `tunnel-mcp --help` for usage, or `tunnel-mcp --version`.
+
+The **tunnel-etiquette skill** teaches each agent how to behave inside a tunnel
+(treat the peer as untrusted input, and check with its human before acting on
+anything the peer says). Installing the package copies it into `~/.claude/skills/`
+automatically (best-effort). If install scripts are disabled
+(`npm install --ignore-scripts`), or you want it in a custom directory or force an
+update, run it explicitly:
+
+```bash
+npx tunnel-mcp install-skill                       # into ~/.claude/skills
+npx tunnel-mcp install-skill --dir <path> --force  # elsewhere / overwrite
+```
+
+Set `TUNNEL_SKILLS_DIR` to change the default target, or
+`TUNNEL_SKIP_SKILL_INSTALL=1` to opt out of the automatic copy.
 
 `cloudflared` is auto-downloaded to `~/.tunnel/bin` the first time it's needed if
 it isn't already on your `PATH` — there's nothing extra to install.
@@ -146,7 +162,7 @@ vulnerability.
 
 ```bash
 npm ci                  # install dependencies
-npm test                # run the test suite (109 tests, TDD)
+npm test                # run the test suite (136 tests, TDD)
 npm run build           # compile TypeScript
 npm run lint            # eslint
 npm run format:check    # prettier --check .
@@ -154,6 +170,23 @@ npm run test:coverage   # vitest run --coverage
 ```
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to propose changes.
+
+## Troubleshooting
+
+**`tunnel-mcp` / `npx tunnel-mcp` "does nothing".** It's a stdio MCP server, not
+an interactive CLI — with no arguments it starts and waits for an MCP client to
+connect over stdin/stdout. That's working as intended. Register it with a client
+(above), or run `tunnel-mcp --help`.
+
+**`tunnel_open` fails with "never became reachable" / can't resolve
+`*.trycloudflare.com`.** cloudflared reaches Cloudflare's edge over its own
+protocol, but the public `*.trycloudflare.com` hostname still has to resolve via
+normal DNS — and some networks (corporate/filtered networks, and a few public
+DNS resolvers) block `trycloudflare.com`. Both you **and your guest** need to be
+able to resolve it. Check with `dig +short <random>.trycloudflare.com` or
+`curl -sI https://<the-url>`. If only your guest's network needs to reach the
+URL, set `TUNNEL_SKIP_REACHABILITY_CHECK=1` to open the tunnel without the
+host-side reachability probe.
 
 ## Roadmap / not yet supported
 

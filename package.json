@@ -1,6 +1,6 @@
 {
   "name": "tunnel-mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Let two developers' Claude agents talk directly through an ephemeral, end-to-end-encrypted tunnel.",
   "type": "module",
   "bin": {
@@ -11,6 +11,7 @@
   "files": [
     "dist",
     "skill",
+    "postinstall.mjs",
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
@@ -29,6 +30,7 @@
     "format:check": "prettier --check .",
     "dev": "tsx src/index.ts",
     "e2e": "tsx scripts/e2e-two-agents.ts",
+    "postinstall": "node postinstall.mjs",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
