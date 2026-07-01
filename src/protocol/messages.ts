@@ -63,6 +63,19 @@ export function encodeFrame(frame: ControlFrame): string {
   return JSON.stringify(frame);
 }
 
+// Validate enough of the shape that the `as ControlFrame` cast is honest: every
+// caller switches on `frame.t`, so a parsed value that is null, a primitive, an
+// array, or lacks a string `t` must be rejected here (callers wrap this in
+// try/catch) rather than handed back as a frame that crashes `frame.t`.
 export function decodeFrame(data: string): ControlFrame {
-  return JSON.parse(data) as ControlFrame;
+  const parsed: unknown = JSON.parse(data);
+  if (
+    parsed === null ||
+    typeof parsed !== 'object' ||
+    Array.isArray(parsed) ||
+    typeof (parsed as { t?: unknown }).t !== 'string'
+  ) {
+    throw new Error('malformed control frame');
+  }
+  return parsed as ControlFrame;
 }

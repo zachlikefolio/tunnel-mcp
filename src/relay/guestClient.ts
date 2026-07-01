@@ -71,36 +71,45 @@ export class GuestClient extends EventEmitter {
       };
 
       ws.on('message', (data) => {
-        let frame: ControlFrame;
+        // The host is untrusted: a malformed or schema-invalid frame must never
+        // crash the guest. decodeFrame guarantees a string `t`, but a variant's
+        // fields (e.g. auth_ok.backlog) are still unchecked, so defend the whole
+        // handler like the host relay does. A swallowed frame just stalls, and
+        // the overall connect deadline rejects on a stall.
         try {
-          frame = decodeFrame(data.toString());
-        } catch {
-          return;
-        }
-
-        if (frame.t === 'challenge') {
-          ws.send(
-            encodeFrame({
-              t: 'auth',
-              response: respondChallenge(frame.nonce, this.link.key),
-              name: this.guestName,
-              sinceSeq,
-            }),
-          );
-        } else if (frame.t === 'auth_ok') {
-          for (const m of frame.backlog) this.log.record(m);
-          settleResolve({ goal: frame.goal, peerName: frame.peerName });
-        } else if (frame.t === 'auth_fail') {
-          settleReject(new Error(`auth failed: ${frame.reason}`));
-          ws.close();
-        } else if (frame.t === 'msg') {
-          this.log.record(frame.msg);
-          const waiter = this.pending.get(frame.msg.id);
-          if (waiter) {
-            this.pending.delete(frame.msg.id);
-            waiter.resolve(frame.msg.seq);
+          let frame: ControlFrame;
+          try {
+            frame = decodeFrame(data.toString());
+          } catch {
+            return;
           }
-          this.emit('message', frame.msg);
+
+          if (frame.t === 'challenge') {
+            ws.send(
+              encodeFrame({
+                t: 'auth',
+                response: respondChallenge(frame.nonce, this.link.key),
+                name: this.guestName,
+                sinceSeq,
+              }),
+            );
+          } else if (frame.t === 'auth_ok') {
+            for (const m of frame.backlog) this.log.record(m);
+            settleResolve({ goal: frame.goal, peerName: frame.peerName });
+          } else if (frame.t === 'auth_fail') {
+            settleReject(new Error(`auth failed: ${frame.reason}`));
+            ws.close();
+          } else if (frame.t === 'msg') {
+            this.log.record(frame.msg);
+            const waiter = this.pending.get(frame.msg.id);
+            if (waiter) {
+              this.pending.delete(frame.msg.id);
+              waiter.resolve(frame.msg.seq);
+            }
+            this.emit('message', frame.msg);
+          }
+        } catch {
+          /* untrusted-frame guard: ignore anything malformed */
         }
       });
       ws.on('close', () => this.failPending(new Error('tunnel disconnected')));

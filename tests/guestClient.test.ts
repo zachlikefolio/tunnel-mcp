@@ -185,6 +185,32 @@ describe('GuestClient', () => {
     expect(await gotHost).toBe(`fake-tunnel.trycloudflare.com:${port}`);
   });
 
+  it('does not crash on a malformed auth_ok (missing backlog) from an untrusted host', async () => {
+    const { WebSocketServer } = await import('ws');
+    const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await new Promise<void>((r) => wss.once('listening', () => r()));
+    const port = (wss.address() as { port: number }).port;
+    // Skip the challenge; send a structurally-invalid auth_ok with no `backlog`.
+    // Without the handler guard, `for (const m of frame.backlog)` throws uncaught.
+    wss.on('connection', (sock) =>
+      sock.send(JSON.stringify({ t: 'auth_ok', goal: 'x', peerName: 'y' })),
+    );
+    cleanups.push(() => wss.close());
+
+    const link = parseLink(mintLink(`http://127.0.0.1:${port}`, generateTunnelId(), generateKey()));
+    const guestLog = new SessionLog(generateTunnelId());
+    const guest = new GuestClient(link, 'bob', guestLog, {
+      handshakeTimeoutMs: 2000,
+      connectDeadlineMs: 250,
+    });
+    cleanups.push(() => {
+      guest.close();
+      guestLog.delete();
+    });
+
+    await expect(guest.connect(0)).rejects.toThrow(/timed out establishing tunnel/);
+  });
+
   it('emits a "message" event for a host-sent chat', async () => {
     const { key, relay, guest } = await setup();
     await guest.connect(0);

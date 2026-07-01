@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet.
 
+## [0.1.7] - 2026-07-01
+
+### Security
+
+- **Hardened the untrusted-input decoders against malformed frames.** Added
+  property-based fuzzing (`fast-check`) of `decrypt`, `decodeFrame`, and
+  `parseLink`, which surfaced two robustness bugs — both now fixed:
+  - `decodeFrame` did a blind `JSON.parse(...) as ControlFrame`; a payload that
+    parsed to `null` or a primitive could crash a downstream `frame.t` access. It
+    now rejects anything that isn't a proper frame object with a string `t`.
+  - The guest's WebSocket message handler only guarded frame decoding, so a
+    malformed frame from an untrusted host (e.g. an `auth_ok` with no `backlog`)
+    could throw uncaught and crash the guest. The whole handler is now defended,
+    matching the host relay.
+
 ## [0.1.6] - 2026-07-01
 
 ### Security
@@ -148,7 +163,8 @@ install-skill` copies the `tunnel-etiquette` skill into `~/.claude/skills`
   declaring a fix "confirmed".
 - Test suite of 109 tests built with vitest, developed test-first (TDD).
 
-[Unreleased]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.3...v0.1.4
