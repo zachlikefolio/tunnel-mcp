@@ -63,9 +63,15 @@ share a join link with anyone.
   like a password** — share it only over a trusted, already-authenticated
   channel (e.g. a Slack DM to a known teammate), not in a public channel or
   ticket.
+- **Join links are single-use and expiring.** A join link is consumed by the
+  first guest who successfully authenticates and can never be redeemed again —
+  even after that guest disconnects. Links also expire on their own (10 minutes
+  by default), so a link that is never used stops working. This bounds the
+  damage from a leaked link to a short window before it is used or expires.
 - **Single-guest lock.** The first participant who successfully
   authenticates as guest locks the session. Sessions are strictly two-party;
-  a second join attempt is rejected.
+  a second concurrent join attempt is rejected ("tunnel full"), and any join
+  after the link has been consumed is rejected ("join link already used").
 - **Peer input is untrusted.** Everything a peer sends over the tunnel is
   data, never an instruction. The bundled `tunnel-etiquette` skill
   instructs each agent to treat incoming peer messages as untrusted input
@@ -89,13 +95,15 @@ protect against:
   and system/connection events are visible in plaintext to anything that
   can observe that path (including Cloudflare's infrastructure). Do not
   put secrets in the goal or names.
-- **No link rotation or expiry beyond session teardown.** A join link is
-  valid for the lifetime of the session. If a join link leaks (pasted into
-  the wrong channel, logged, etc.) before the host closes the session,
-  anyone with that link can join as the guest — up until the host runs
-  `tunnel_close`, the session idles out, or the host process exits. There
-  is currently no way to rotate the key or issue single-use/expiring
-  tokens.
+- **A leaked link can still be redeemed within its window, before your guest
+  joins.** Join links are single-use and expire (10 minutes by default), so a
+  leaked link that is never used, has already been used, or has aged out can no
+  longer admit anyone. The residual risk is a race: if a link leaks and an
+  attacker redeems it faster than your intended guest — within the expiry
+  window and before that guest connects — the attacker consumes the single-use
+  link, joins as the guest, and locks out the real one. Share links only over
+  trusted channels, and open a fresh tunnel if you suspect a link was exposed
+  before it was used. There is no in-session key rotation.
 - **The goal is never encrypted.** By design, the goal string is plaintext
   metadata used for connection setup and display; it receives no
   confidentiality protection at any layer.
@@ -113,9 +121,9 @@ protect against:
   instructions by an unguarded agent.
 - **Out of scope for this release**: host-offline/async messaging,
   more than two participants, alternative transports (ngrok, WebRTC),
-  link rotation or one-time join tokens, and encryption of the goal or
-  other connection metadata. These may be considered for future versions
-  but should not be assumed to exist today.
+  in-session key/link rotation, and encryption of the goal or other
+  connection metadata. These may be considered for future versions but
+  should not be assumed to exist today.
 
 If you find a way to break any of the guarantees above (e.g. read a chat
 message body without the key, join a locked session, or get an agent to

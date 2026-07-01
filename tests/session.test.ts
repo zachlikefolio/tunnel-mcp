@@ -107,6 +107,50 @@ describe('TunnelSession (host <-> guest, fake cloudflared)', () => {
     expect(opened.joinLink).toContain('/t/');
   });
 
+  it('a leaked join link cannot be reused — a second guest is rejected (single-use)', async () => {
+    const host = new TunnelSession(fakeDeps({}));
+    const guest1 = new TunnelSession();
+    const guest2 = new TunnelSession();
+    sessions.push(host, guest1, guest2);
+
+    const opened = await host.open('goal', 'alice');
+    await guest1.join(opened.joinLink, 'bob'); // consumes the single-use link
+    await guest1.close();
+
+    // Wait for the host relay to observe guest1's disconnect (slot free again).
+    const deadline = Date.now() + 2000;
+    while (host.status().peerConnected && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+
+    // Anyone who later obtains the same link cannot join.
+    await expect(guest2.join(opened.joinLink, 'mallory')).rejects.toThrow(/already used/i);
+  });
+
+  it('open() reports the join-link expiry window (default 10 minutes)', async () => {
+    const host = new TunnelSession(fakeDeps({}));
+    sessions.push(host);
+    const opened = await host.open('goal', 'alice');
+    expect(opened.joinLinkExpiresInSec).toBe(600);
+  });
+
+  it('an expired join link is rejected end-to-end', async () => {
+    const host = new TunnelSession({
+      ensureCloudflared: async () => 'fake',
+      startCloudflared: async (_b: string, port: number) => ({
+        publicUrl: `http://127.0.0.1:${port}`,
+        stop() {},
+      }),
+      joinTtlMs: 20, // window lapses before the guest joins
+    });
+    const guest = new TunnelSession();
+    sessions.push(host, guest);
+
+    const opened = await host.open('goal', 'alice');
+    await new Promise((r) => setTimeout(r, 60));
+    await expect(guest.join(opened.joinLink, 'bob')).rejects.toThrow(/expired/i);
+  });
+
   it('listen() and say() throw a clean error after close() instead of crashing', async () => {
     const host = new TunnelSession(fakeDeps({}));
     sessions.push(host);

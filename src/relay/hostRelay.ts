@@ -10,7 +10,7 @@ import {
   decodeFrame,
   buildSystem,
 } from '../protocol/messages.js';
-import { DEFAULT_IDLE_TEARDOWN_MS } from '../config.js';
+import { DEFAULT_IDLE_TEARDOWN_MS, DEFAULT_JOIN_LINK_TTL_MS } from '../config.js';
 
 export interface HostRelayOptions {
   tunnelId: string;
@@ -18,6 +18,7 @@ export interface HostRelayOptions {
   goal: string;
   hostName: string;
   idleMs?: number;
+  joinTtlMs?: number;
 }
 
 export class HostRelay extends EventEmitter {
@@ -28,12 +29,18 @@ export class HostRelay extends EventEmitter {
   private challenges = new WeakMap<WebSocket, string>();
   private idleTimer?: NodeJS.Timeout;
   private tearingDown = false;
+  // Single-use, expiring join link: the link is valid until `joinDeadline`, and
+  // is consumed by the first successful authentication so it can never be reused
+  // (even after that guest disconnects).
+  private consumed = false;
+  private readonly joinDeadline: number;
 
   constructor(
     private opts: HostRelayOptions,
     private log: SessionLog,
   ) {
     super();
+    this.joinDeadline = Date.now() + (opts.joinTtlMs ?? DEFAULT_JOIN_LINK_TTL_MS);
     this.server = http.createServer();
     this.wss = new WebSocketServer({ server: this.server, path: `/t/${opts.tunnelId}` });
     this.wss.on('connection', (ws) => this.onConnection(ws));
@@ -117,11 +124,26 @@ export class HostRelay extends EventEmitter {
             ws.close();
             return;
           }
-          if (this.guest && this.guest !== ws && this.guest.readyState === WebSocket.OPEN) {
-            ws.send(encodeFrame({ t: 'auth_fail', reason: 'tunnel full' }));
+          if (Date.now() > this.joinDeadline) {
+            ws.send(encodeFrame({ t: 'auth_fail', reason: 'join link expired' }));
             ws.close();
             return;
           }
+          if (this.consumed) {
+            // The single-use link was already redeemed. Distinguish the case
+            // where the original guest is still connected ('tunnel full') from a
+            // reuse attempt after they left ('join link already used').
+            const connected = !!this.guest && this.guest.readyState === WebSocket.OPEN;
+            ws.send(
+              encodeFrame({
+                t: 'auth_fail',
+                reason: connected ? 'tunnel full' : 'join link already used',
+              }),
+            );
+            ws.close();
+            return;
+          }
+          this.consumed = true;
           this.guest = ws;
           this.guestName = frame.name;
           const sinceSeq = Number.isFinite(frame.sinceSeq) ? frame.sinceSeq : 0;

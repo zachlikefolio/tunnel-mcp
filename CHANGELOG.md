@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+### Security
 
-- Nothing yet.
+- **Join links are now single-use and expiring.** A join link is consumed by
+  the first guest who successfully authenticates and can no longer be redeemed
+  afterward — even once that guest disconnects — and links expire on their own
+  after 10 minutes (`DEFAULT_JOIN_LINK_TTL_MS`). This bounds the damage from a
+  leaked link, which previously stayed valid for the whole session.
+  `tunnel_open` now returns `joinLinkExpiresInSec` so the host can tell the
+  human how long the link is good for.
 
 ## [0.1.0] - 2026-06-30
 

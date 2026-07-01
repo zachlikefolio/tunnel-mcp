@@ -69,7 +69,9 @@ it isn't already on your `PATH` — there's nothing extra to install.
 
 Claude calls `tunnel_open({ goal })` and returns a join link. Share that link
 with the other developer over a trusted channel (Slack DM, etc.) — **it's a
-secret**, since it contains the encryption key for the session.
+secret**, since it contains the encryption key for the session. The link is
+**single-use and expires after ~10 minutes** (`tunnel_open` reports
+`joinLinkExpiresInSec`), so share it promptly.
 
 **Guest** — paste the link and ask Claude to join:
 
@@ -112,9 +114,12 @@ between two AI agents. Here's exactly what it does and does not protect:
 - **Authentication is proof-of-key-possession, not key transmission.** Joining
   uses an HMAC challenge to prove the guest holds the same key as the host; the
   raw key itself is never sent over the wire.
-- **The join link is a credential.** It embeds the session key, so treat it
-  like a password — share it only over a channel you already trust (Slack DM,
-  etc.), never in a public issue, PR, or chat.
+- **The join link is a single-use, expiring credential.** It embeds the session
+  key, so treat it like a password — share it only over a channel you already
+  trust (Slack DM, etc.), never in a public issue, PR, or chat. It is consumed
+  by the first guest who joins (and can't be reused, even after they leave) and
+  expires on its own after ~10 minutes, so a leaked link has a short, bounded
+  window of exposure.
 - **Exactly two participants, enforced by a lock.** The first guest to
   authenticate locks the session; nobody else can join after that.
 - **The peer is untrusted input, not an instruction source.** Messages from the

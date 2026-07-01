@@ -17,6 +17,7 @@ import { startCloudflared as realStart, TunnelHandle } from './cloudflared/tunne
 import {
   DEFAULT_LISTEN_TIMEOUT_MS,
   DEFAULT_IDLE_TEARDOWN_MS,
+  DEFAULT_JOIN_LINK_TTL_MS,
   OPEN_RETRY_ATTEMPTS,
 } from './config.js';
 
@@ -24,6 +25,7 @@ export interface SessionDeps {
   ensureCloudflared: () => Promise<string>;
   startCloudflared: (bin: string, port: number) => Promise<TunnelHandle>;
   idleMs?: number;
+  joinTtlMs?: number;
 }
 
 export interface SessionStatus {
@@ -60,13 +62,19 @@ export class TunnelSession {
   async open(
     goal: string,
     hostName: string,
-  ): Promise<{ tunnelId: string; joinLink: string; status: string }> {
+  ): Promise<{
+    tunnelId: string;
+    joinLink: string;
+    status: string;
+    joinLinkExpiresInSec: number;
+  }> {
     if (this.isOpen) throw new Error('a tunnel is already open in this process');
     const key = generateKey();
     const tunnelId = generateTunnelId();
     const idleMs = this.deps.idleMs ?? DEFAULT_IDLE_TEARDOWN_MS;
+    const joinTtlMs = this.deps.joinTtlMs ?? DEFAULT_JOIN_LINK_TTL_MS;
     const log = new SessionLog(tunnelId);
-    const relay = new HostRelay({ tunnelId, key, goal, hostName, idleMs }, log);
+    const relay = new HostRelay({ tunnelId, key, goal, hostName, idleMs, joinTtlMs }, log);
     const port = await relay.start();
 
     // Bounded retry: cloudflared may crash or never yield a URL; re-spawn before giving up.
@@ -106,7 +114,12 @@ export class TunnelSession {
     });
 
     relay.submitLocal(buildSystem('host', `tunnel opened — goal: ${goal}`));
-    return { tunnelId, joinLink, status: 'waiting_for_guest' };
+    return {
+      tunnelId,
+      joinLink,
+      status: 'waiting_for_guest',
+      joinLinkExpiresInSec: Math.round(joinTtlMs / 1000),
+    };
   }
 
   async join(

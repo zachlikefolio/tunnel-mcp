@@ -7,6 +7,9 @@ export const SESSIONS_DIR = path.join(TUNNEL_HOME, 'sessions');
 
 export const DEFAULT_LISTEN_TIMEOUT_MS = 60_000;
 export const DEFAULT_IDLE_TEARDOWN_MS = 30 * 60_000;
+// Join links are single-use and expire after this window; a leaked link that
+// is never used (or is reused after the guest joined) can't admit anyone.
+export const DEFAULT_JOIN_LINK_TTL_MS = 10 * 60_000;
 
 // cloudflared startup robustness
 export const CLOUDFLARED_URL_TIMEOUT_MS = 30_000; // wait for the URL line

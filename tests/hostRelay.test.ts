@@ -298,6 +298,94 @@ describe('HostRelay contract', () => {
     second.close();
   });
 
+  it('makes the join link single-use — a second join after the first guest disconnects is rejected as already used', async () => {
+    tunnelId = generateTunnelId();
+    const key = generateKey();
+    const log = new SessionLog(tunnelId);
+    relay = new HostRelay({ tunnelId, key, goal: 'ship it', hostName: 'host' }, log);
+    const port = await relay.start();
+    const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
+
+    // First guest authenticates (consuming the single-use link), then leaves.
+    const first = new WebSocket(url);
+    const nextFirst = frameQueue(first);
+    await waitForOpen(first);
+    const firstChallenge = await nextFirst();
+    if (firstChallenge.t !== 'challenge') throw new Error('expected challenge');
+    first.send(
+      encodeFrame({
+        t: 'auth',
+        response: respondChallenge(firstChallenge.nonce, key),
+        name: 'g1',
+        sinceSeq: 0,
+      }),
+    );
+    expect((await nextFirst()).t).toBe('auth_ok');
+    first.close();
+
+    // Wait until the relay has observed the disconnect: the slot is free again,
+    // but the link has already been consumed.
+    const deadline = Date.now() + 2000;
+    while (relay.peerConnected && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(relay.peerConnected).toBe(false);
+
+    // A brand-new client presenting the SAME valid key must still be rejected —
+    // the leaked link can no longer be used, even though nobody is connected.
+    const second = new WebSocket(url);
+    const nextSecond = frameQueue(second);
+    await waitForOpen(second);
+    const secondChallenge = await nextSecond();
+    if (secondChallenge.t !== 'challenge') throw new Error('expected challenge');
+    second.send(
+      encodeFrame({
+        t: 'auth',
+        response: respondChallenge(secondChallenge.nonce, key),
+        name: 'g2',
+        sinceSeq: 0,
+      }),
+    );
+    const reply = await nextSecond();
+    expect(reply.t).toBe('auth_fail');
+    if (reply.t === 'auth_fail') expect(reply.reason).toBe('join link already used');
+
+    first.close();
+    second.close();
+  });
+
+  it('rejects a join after the join link has expired (TTL elapsed)', async () => {
+    tunnelId = generateTunnelId();
+    const key = generateKey();
+    const log = new SessionLog(tunnelId);
+    // Tiny join-link TTL so the window lapses before the guest even connects.
+    relay = new HostRelay({ tunnelId, key, goal: 'ship it', hostName: 'host', joinTtlMs: 20 }, log);
+    const port = await relay.start();
+    const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
+
+    await new Promise((r) => setTimeout(r, 60)); // let the 20ms window elapse
+
+    const ws = new WebSocket(url);
+    const next = frameQueue(ws);
+    await waitForOpen(ws);
+    const challenge = await next();
+    if (challenge.t !== 'challenge') throw new Error('expected challenge');
+    ws.send(
+      encodeFrame({
+        t: 'auth',
+        response: respondChallenge(challenge.nonce, key),
+        name: 'late',
+        sinceSeq: 0,
+      }),
+    );
+    const reply = await next();
+    expect(reply.t).toBe('auth_fail');
+    if (reply.t === 'auth_fail') expect(reply.reason).toBe('join link expired');
+    expect(relay.peerConnected).toBe(false);
+
+    ws.close();
+  });
+
   it('ignores a guest send frame whose msg is missing id or body', async () => {
     tunnelId = generateTunnelId();
     const key = generateKey();
