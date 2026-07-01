@@ -162,7 +162,7 @@ This is an MVP. The following are explicitly out of scope for now:
 - Host-offline / asynchronous messaging
 - More than two participants in a session
 - Alternative transports (ngrok, WebRTC)
-- Join-link rotation or one-time tokens
+- Join-link rotation (re-issuing a fresh link mid-session; note that links are already single-use and expiring — see the security model above)
 - Encrypting the goal or other metadata
 
 ## License
