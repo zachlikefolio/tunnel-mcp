@@ -68,12 +68,12 @@
     "@anthropic-ai/sdk": "^0.109.0",
     "@types/node": "^20.14.0",
     "@types/ws": "^8.5.10",
-    "@vitest/coverage-v8": "^2.0.0",
+    "@vitest/coverage-v8": "^4.1.9",
     "eslint": "^9.9.0",
     "prettier": "^3.3.0",
     "tsx": "^4.16.0",
     "typescript": "^5.5.0",
     "typescript-eslint": "^8.0.0",
-    "vitest": "^2.0.0"
+    "vitest": "^4.1.9"
   }
 }

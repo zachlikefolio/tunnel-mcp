@@ -154,10 +154,16 @@ describe('startCloudflared readiness gate', () => {
         resolveHost,
         ...FAST,
       });
-      // The old poisoner did fetch(<tunnel url>); the gate must never fetch the hostname.
-      const touchedHost = fetchSpy.mock.calls.some((c) =>
-        String(c[0]).includes('fake-tunnel-1.trycloudflare.com'),
-      );
+      // The old poisoner did fetch(<tunnel url>); the gate must never fetch the
+      // hostname. Compare the exact URL host (not a substring) so a DoH request
+      // whose query happens to contain the name doesn't false-positive.
+      const touchedHost = fetchSpy.mock.calls.some((c) => {
+        try {
+          return new URL(String(c[0])).hostname === 'fake-tunnel-1.trycloudflare.com';
+        } catch {
+          return false;
+        }
+      });
       expect(touchedHost).toBe(false);
       handle.stop();
     } finally {

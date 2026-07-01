@@ -43,9 +43,11 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
 
-      # Trusted publishing requires npm CLI >= 11.5.1 (and Node >= 22.14).
+      # Trusted publishing requires npm CLI >= 11.5.1 (and Node >= 22.14). Pin the
+      # exact version (not @latest) so the toolchain is reproducible — bump
+      # deliberately.
       - name: Ensure OIDC-capable npm
-        run: npm install -g npm@latest
+        run: npm install -g npm@11.18.0
 
       - name: Install dependencies
         run: npm ci
