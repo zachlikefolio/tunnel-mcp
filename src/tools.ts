@@ -41,7 +41,7 @@ export function registerTools(
     'tunnel_open',
     {
       description:
-        'Open a tunnel as host and get a join link to share. The link is a secret — share it over a trusted channel. It is single-use (works for exactly one guest) and expires (see joinLinkExpiresInSec in the result), so tell the human to share it promptly.',
+        'Open a tunnel as host and get a join link to share. The link is a secret — share it over a trusted channel. It is single-use (works for exactly one guest) and expires (see joinLinkExpiresInSec in the result), so tell the human to share it promptly. If the result includes a reachabilityWarning, relay it to the human: this host could not confirm it can reach the link, so the guest should verify they can open it.',
       inputSchema: { goal: z.string() },
     },
     async ({ goal }) => ok(await session.open(goal, opts.displayName)),

@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet.
 
+## [0.1.3] - 2026-07-01
+
+### Changed
+
+- **`tunnel_open` no longer hard-fails when the host can't reach
+  `*.trycloudflare.com`.** Because this is a cross-network tool, only the guest's
+  network has to reach the link — so a host-side reachability-probe failure
+  (blocked DNS, or a proxy Node's `fetch` ignores) now **opens the tunnel anyway
+  and returns a `reachabilityWarning`** by default, instead of blocking a tunnel
+  that would have worked for the guest. Behavior is configurable via
+  `TUNNEL_REACHABILITY`: `warn` (default), `strict` (previous hard-fail), or
+  `off` (skip the probe). This replaces the `TUNNEL_SKIP_REACHABILITY_CHECK` flag
+  from 0.1.2, which is still honored as `off` for backward compatibility.
+
 ## [0.1.2] - 2026-07-01
 
 ### Added
@@ -80,7 +94,8 @@ install-skill` copies the `tunnel-etiquette` skill into `~/.claude/skills`
   declaring a fix "confirmed".
 - Test suite of 109 tests built with vitest, developed test-first (TDD).
 
-[Unreleased]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/zachlikefolio/tunnel-mcp/releases/tag/v0.1.0

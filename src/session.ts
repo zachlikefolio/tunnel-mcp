@@ -20,7 +20,7 @@ import {
   DEFAULT_JOIN_LINK_TTL_MS,
   OPEN_RETRY_ATTEMPTS,
 } from './config.js';
-import { envFlag } from './env.js';
+import { reachabilityMode } from './env.js';
 
 export interface SessionDeps {
   ensureCloudflared: () => Promise<string>;
@@ -39,14 +39,9 @@ export interface SessionStatus {
 
 const DEFAULT_DEPS: SessionDeps = {
   ensureCloudflared: realEnsure,
-  // Read the escape hatch per-call (not at module load) so it can be set right
-  // before opening a tunnel.
-  startCloudflared: (bin, port) =>
-    realStart(
-      bin,
-      port,
-      envFlag('TUNNEL_SKIP_REACHABILITY_CHECK') ? { skipHealthCheck: true } : {},
-    ),
+  // Resolve the reachability mode per-call (not at module load) so TUNNEL_REACHABILITY
+  // can be set right before opening a tunnel.
+  startCloudflared: (bin, port) => realStart(bin, port, { reachability: reachabilityMode() }),
 };
 
 export class TunnelSession {
@@ -75,6 +70,7 @@ export class TunnelSession {
     joinLink: string;
     status: string;
     joinLinkExpiresInSec: number;
+    reachabilityWarning?: string;
   }> {
     if (this.isOpen) throw new Error('a tunnel is already open in this process');
     const key = generateKey();
@@ -131,6 +127,9 @@ export class TunnelSession {
       joinLink,
       status: 'waiting_for_guest',
       joinLinkExpiresInSec: Math.round(joinTtlMs / 1000),
+      // Present only in 'warn' mode when the host couldn't confirm reachability;
+      // the agent should relay it to the human before sharing the link.
+      ...(tunnel.reachabilityWarning ? { reachabilityWarning: tunnel.reachabilityWarning } : {}),
     };
   }
 

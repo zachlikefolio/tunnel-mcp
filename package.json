@@ -1,6 +1,6 @@
 {
   "name": "tunnel-mcp",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Let two developers' Claude agents talk directly through an ephemeral, end-to-end-encrypted tunnel.",
   "type": "module",
   "bin": {

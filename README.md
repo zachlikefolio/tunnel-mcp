@@ -178,15 +178,21 @@ an interactive CLI — with no arguments it starts and waits for an MCP client t
 connect over stdin/stdout. That's working as intended. Register it with a client
 (above), or run `tunnel-mcp --help`.
 
-**`tunnel_open` fails with "never became reachable" / can't resolve
-`*.trycloudflare.com`.** cloudflared reaches Cloudflare's edge over its own
-protocol, but the public `*.trycloudflare.com` hostname still has to resolve via
-normal DNS — and some networks (corporate/filtered networks, and a few public
-DNS resolvers) block `trycloudflare.com`. Both you **and your guest** need to be
-able to resolve it. Check with `dig +short <random>.trycloudflare.com` or
-`curl -sI https://<the-url>`. If only your guest's network needs to reach the
-URL, set `TUNNEL_SKIP_REACHABILITY_CHECK=1` to open the tunnel without the
-host-side reachability probe.
+**`tunnel_open` warns that this machine can't reach `*.trycloudflare.com`.**
+cloudflared reaches Cloudflare's edge over its own protocol, but the public
+`*.trycloudflare.com` hostname still has to resolve via normal DNS — and some
+networks (corporate/filtered networks, some public DNS resolvers, or a proxy that
+Node's `fetch` ignores) can't reach it from the host. Because only your
+**guest's** network truly has to reach the link, `tunnel_open` **opens anyway and
+returns a `reachabilityWarning` by default** — share the link and have your guest
+confirm they can open it. Control this with `TUNNEL_REACHABILITY`:
+
+- `warn` (default) — open, but warn when the host can't reach the URL
+- `strict` — fail `tunnel_open` unless the host can reach the URL first
+- `off` — skip the host-side reachability probe entirely
+
+Diagnose the host's DNS with `dig +short <random>.trycloudflare.com` or
+`curl -sI https://<the-url>`.
 
 ## Roadmap / not yet supported
 

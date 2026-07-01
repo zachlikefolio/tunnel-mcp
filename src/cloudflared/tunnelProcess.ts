@@ -4,10 +4,12 @@ import {
   CLOUDFLARED_HEALTH_ATTEMPTS,
   CLOUDFLARED_HEALTH_INTERVAL_MS,
 } from '../config.js';
+import { ReachabilityMode } from '../env.js';
 
 export interface TunnelHandle {
   publicUrl: string;
   stop(): void;
+  reachabilityWarning?: string; // set in 'warn' mode when the host couldn't reach the URL
 }
 
 export interface StartOptions {
@@ -17,7 +19,7 @@ export interface StartOptions {
   intervalMs?: number; // delay between probes
   healthCheck?: (url: string) => Promise<boolean>; // default: HTTP reachability
   probeTimeoutMs?: number; // per-attempt budget for a health probe
-  skipHealthCheck?: boolean; // bypass the probe (host DNS blocked but guest resolves)
+  reachability?: ReachabilityMode; // warn | strict | off (default: strict at this layer)
 }
 
 const URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
@@ -63,29 +65,44 @@ export async function defaultHealthCheck(url: string): Promise<boolean> {
   return (await reachabilityProbe(url, DEFAULT_PROBE_TIMEOUT_MS)).ok;
 }
 
-// Builds the actionable "never became reachable" error. Names the host and,
-// when the failure looks like DNS resolution, points at *.trycloudflare.com
-// blocking — the single most common real-world cause. Always mentions the
-// escape hatch, since the guest's network (not the host's) is what must reach
-// the URL for messaging.
-export function unreachableMessage(url: string, attempts: number, lastReason?: string): string {
+// The shared DNS sentence: when a probe failure looks like name resolution,
+// point at *.trycloudflare.com being blocked — the single most common real-world
+// cause. Returns '' when the failure isn't DNS-shaped.
+function dnsHint(url: string, reason?: string): string {
+  if (!reason || !/ENOTFOUND|EAI_AGAIN|getaddrinfo|\bdns\b/i.test(reason)) return '';
   let host = url;
   try {
     host = new URL(url).host;
   } catch {
     /* keep the raw url */
   }
-  const dnsish = !!lastReason && /ENOTFOUND|EAI_AGAIN|getaddrinfo|\bdns\b/i.test(lastReason);
+  return (
+    ` This machine can't resolve ${host} — your DNS or network may be blocking *.trycloudflare.com` +
+    ` (common on filtered/corporate networks and some public DNS resolvers).`
+  );
+}
+
+// Fatal error for `strict` mode: the host never confirmed the edge was routing.
+export function unreachableMessage(url: string, attempts: number, lastReason?: string): string {
   let msg = `cloudflared reported ${url} but it never became reachable from this machine after ${attempts} probe(s)`;
   if (lastReason) msg += ` (last error: ${lastReason})`;
-  msg += '.';
-  if (dnsish) {
-    msg +=
-      ` This machine can't resolve ${host} — your DNS or network may be blocking *.trycloudflare.com` +
-      ` (common on filtered/corporate networks and some public DNS resolvers). You and your guest both` +
-      ` need to be able to resolve it.`;
-  }
-  msg += ` If you're confident your guest's network can reach the URL, set TUNNEL_SKIP_REACHABILITY_CHECK=1 to open the tunnel anyway.`;
+  msg += '.' + dnsHint(url, lastReason);
+  msg +=
+    ` Both you and your guest must be able to reach it. Set TUNNEL_REACHABILITY=warn (the default) to` +
+    ` open anyway with a warning, or TUNNEL_REACHABILITY=off to skip this check entirely.`;
+  return msg;
+}
+
+// Non-fatal warning for `warn` mode: the tunnel is open, but this host couldn't
+// confirm reachability. Only the guest's network has to reach the URL, so this
+// is often a false alarm — but surface it so the human can sanity-check.
+export function reachabilityWarningMessage(url: string, lastReason?: string): string {
+  let msg = `Tunnel opened, but this machine could not reach ${url}`;
+  if (lastReason) msg += ` (${lastReason})`;
+  msg += '.' + dnsHint(url, lastReason);
+  msg +=
+    ` Your guest still needs to reach the link — if they can't open it, check your DNS/proxy. Set` +
+    ` TUNNEL_REACHABILITY=strict to require host reachability, or =off to silence this check.`;
   return msg;
 }
 
@@ -192,17 +209,25 @@ export function startCloudflared(
         if (url && !settled) {
           settled = true;
           clearTimeout(timer);
-          // Escape hatch: the reachability probe runs on the *host*, but only the
-          // guest's network must reach the URL for messaging. A host on a filtered
-          // network can opt to skip the probe and hand out the link regardless.
-          if (opts.skipHealthCheck) {
+          // The reachability probe runs on the *host*, but only the guest's
+          // network must reach the URL for messaging. 'off' skips it entirely;
+          // 'warn' (the product default) opens anyway and reports a warning;
+          // 'strict' fails open() if the host can't confirm reachability.
+          const mode: ReachabilityMode = opts.reachability ?? 'strict';
+          if (mode === 'off') {
             resolve({ publicUrl: url, stop });
             return;
           }
           waitHealthy(url, attempts, intervalMs, probe, probeTimeoutMs)
             .then((res) => {
               if (res.ok) resolve({ publicUrl: url, stop });
-              else {
+              else if (mode === 'warn') {
+                resolve({
+                  publicUrl: url,
+                  stop,
+                  reachabilityWarning: reachabilityWarningMessage(url, res.reason),
+                });
+              } else {
                 stop();
                 reject(new Error(unreachableMessage(url, attempts, res.reason)));
               }

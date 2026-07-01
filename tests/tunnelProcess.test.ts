@@ -6,6 +6,7 @@ import {
   parsePublicUrl,
   startCloudflared,
   unreachableMessage,
+  reachabilityWarningMessage,
   describeProbeError,
 } from '../src/cloudflared/tunnelProcess.js';
 
@@ -124,7 +125,7 @@ describe('startCloudflared', () => {
     }
   });
 
-  it('surfaces the reachability escape hatch in the unreachable error', async () => {
+  it('strict mode (default) rejects and names the TUNNEL_REACHABILITY knob', async () => {
     const fake = writeFake();
     try {
       await expect(
@@ -132,27 +133,63 @@ describe('startCloudflared', () => {
           extraArgs: [fake],
           intervalMs: 5,
           attempts: 2,
+          reachability: 'strict',
           healthCheck: async () => false,
         }),
-      ).rejects.toThrow(/TUNNEL_SKIP_REACHABILITY_CHECK/);
+      ).rejects.toThrow(/TUNNEL_REACHABILITY/);
     } finally {
       fs.rmSync(fake);
     }
   });
 
-  it('skipHealthCheck resolves with the url without probing', async () => {
+  it('warn mode opens the tunnel and attaches a warning instead of throwing', async () => {
+    const fake = writeFake();
+    try {
+      const handle = await startCloudflared(process.execPath, 0, {
+        extraArgs: [fake],
+        intervalMs: 5,
+        attempts: 2,
+        reachability: 'warn',
+        healthCheck: async () => false, // host can't reach it
+      });
+      expect(handle.publicUrl).toBe('https://fake-tunnel-1.trycloudflare.com');
+      expect(handle.reachabilityWarning).toMatch(/could not reach/i);
+      expect(handle.reachabilityWarning).toContain('TUNNEL_REACHABILITY');
+      handle.stop();
+    } finally {
+      fs.rmSync(fake);
+    }
+  });
+
+  it('warn mode attaches NO warning when the probe succeeds', async () => {
+    const fake = writeFake();
+    try {
+      const handle = await startCloudflared(process.execPath, 0, {
+        extraArgs: [fake],
+        reachability: 'warn',
+        healthCheck: async () => true,
+      });
+      expect(handle.reachabilityWarning).toBeUndefined();
+      handle.stop();
+    } finally {
+      fs.rmSync(fake);
+    }
+  });
+
+  it('off mode resolves with the url without probing', async () => {
     const fake = writeFake();
     try {
       let probed = false;
       const handle = await startCloudflared(process.execPath, 0, {
         extraArgs: [fake],
-        skipHealthCheck: true,
+        reachability: 'off',
         healthCheck: async () => {
           probed = true;
           return false; // would fail if it were consulted
         },
       });
       expect(handle.publicUrl).toBe('https://fake-tunnel-1.trycloudflare.com');
+      expect(handle.reachabilityWarning).toBeUndefined();
       expect(probed).toBe(false);
       handle.stop();
     } finally {
@@ -201,12 +238,28 @@ describe('startCloudflared', () => {
     expect(dns).toContain('blue-cat-42.trycloudflare.com');
     expect(dns.toLowerCase()).toContain('resolve');
     expect(dns).toContain('*.trycloudflare.com');
-    expect(dns).toContain('TUNNEL_SKIP_REACHABILITY_CHECK');
+    expect(dns).toContain('TUNNEL_REACHABILITY');
 
     const other = unreachableMessage(url, 3, 'ECONNREFUSED');
     expect(other).toMatch(/never became reachable/);
-    expect(other).toContain('TUNNEL_SKIP_REACHABILITY_CHECK');
+    expect(other).toContain('TUNNEL_REACHABILITY');
     expect(other.toLowerCase()).not.toContain('blocking');
+  });
+
+  it('reachabilityWarningMessage is non-fatal and only DNS-hints when relevant', () => {
+    const url = 'https://blue-cat-42.trycloudflare.com';
+    const w = reachabilityWarningMessage(
+      url,
+      'ENOTFOUND: getaddrinfo ENOTFOUND blue-cat-42.trycloudflare.com',
+    );
+    expect(w.toLowerCase()).toContain('opened');
+    expect(w.toLowerCase()).not.toContain('never became reachable');
+    expect(w).toContain('*.trycloudflare.com');
+    expect(w).toContain('TUNNEL_REACHABILITY');
+
+    const w2 = reachabilityWarningMessage(url, 'ECONNREFUSED');
+    expect(w2.toLowerCase()).toContain('opened');
+    expect(w2).not.toContain('*.trycloudflare.com');
   });
 
   it('describeProbeError extracts the underlying cause code (undici wraps DNS errors)', () => {
