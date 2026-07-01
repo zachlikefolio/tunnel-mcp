@@ -1,13 +1,24 @@
 import { EventEmitter } from 'node:events';
 import { Key, generateKey } from './protocol/crypto.js';
 import { generateTunnelId, mintLink, parseLink } from './protocol/link.js';
-import { buildChat, buildSystem, decrypt, PlainMessage, Role, WireMessage } from './protocol/messages.js';
+import {
+  buildChat,
+  buildSystem,
+  decrypt,
+  PlainMessage,
+  Role,
+  WireMessage,
+} from './protocol/messages.js';
 import { SessionLog } from './log/sessionLog.js';
 import { HostRelay } from './relay/hostRelay.js';
 import { GuestClient } from './relay/guestClient.js';
 import { ensureCloudflared as realEnsure } from './cloudflared/provision.js';
 import { startCloudflared as realStart, TunnelHandle } from './cloudflared/tunnelProcess.js';
-import { DEFAULT_LISTEN_TIMEOUT_MS, DEFAULT_IDLE_TEARDOWN_MS, OPEN_RETRY_ATTEMPTS } from './config.js';
+import {
+  DEFAULT_LISTEN_TIMEOUT_MS,
+  DEFAULT_IDLE_TEARDOWN_MS,
+  OPEN_RETRY_ATTEMPTS,
+} from './config.js';
 
 export interface SessionDeps {
   ensureCloudflared: () => Promise<string>;
@@ -42,9 +53,14 @@ export class TunnelSession {
 
   constructor(private deps: SessionDeps = DEFAULT_DEPS) {}
 
-  get isOpen(): boolean { return !!this.role; }
+  get isOpen(): boolean {
+    return !!this.role;
+  }
 
-  async open(goal: string, hostName: string): Promise<{ tunnelId: string; joinLink: string; status: string }> {
+  async open(
+    goal: string,
+    hostName: string,
+  ): Promise<{ tunnelId: string; joinLink: string; status: string }> {
     if (this.isOpen) throw new Error('a tunnel is already open in this process');
     const key = generateKey();
     const tunnelId = generateTunnelId();
@@ -68,7 +84,9 @@ export class TunnelSession {
     if (!tunnel) {
       await relay.close(); // no half-open state on failure
       log.delete();
-      throw new Error(`could not establish a cloudflared tunnel after ${OPEN_RETRY_ATTEMPTS} attempts: ${String(lastErr)}`);
+      throw new Error(
+        `could not establish a cloudflared tunnel after ${OPEN_RETRY_ATTEMPTS} attempts: ${String(lastErr)}`,
+      );
     }
 
     const joinLink = mintLink(tunnel.publicUrl, tunnelId, key);
@@ -83,13 +101,18 @@ export class TunnelSession {
     this.tunnel = tunnel;
 
     // Third teardown trigger: the relay's idle timer asks the session to close.
-    relay.once('idle', () => { void this.close(); });
+    relay.once('idle', () => {
+      void this.close();
+    });
 
     relay.submitLocal(buildSystem('host', `tunnel opened — goal: ${goal}`));
     return { tunnelId, joinLink, status: 'waiting_for_guest' };
   }
 
-  async join(joinLink: string, guestName: string): Promise<{ tunnelId: string; goal: string; peer: string }> {
+  async join(
+    joinLink: string,
+    guestName: string,
+  ): Promise<{ tunnelId: string; goal: string; peer: string }> {
     if (this.isOpen) throw new Error('a tunnel is already open in this process');
     const link = parseLink(joinLink);
     const log = new SessionLog(`${link.tunnelId}-guest`);
@@ -116,7 +139,10 @@ export class TunnelSession {
     return { seq: await this.guest!.say(msg) };
   }
 
-  async listen(sinceSeq: number, timeoutMs = DEFAULT_LISTEN_TIMEOUT_MS): Promise<{ messages: PlainMessage[]; status: SessionStatus }> {
+  async listen(
+    sinceSeq: number,
+    timeoutMs = DEFAULT_LISTEN_TIMEOUT_MS,
+  ): Promise<{ messages: PlainMessage[]; status: SessionStatus }> {
     // close() clears role/source but leaves log/key set, so this must check
     // isOpen/source (not log/key) or a post-close call falls through to
     // `(this.source as EventEmitter).on(...)` with source === undefined.
@@ -125,9 +151,21 @@ export class TunnelSession {
     let batch = ready();
     if (batch.length === 0) {
       batch = await new Promise<WireMessage[]>((resolve) => {
-        const onMsg = () => { const b = ready(); if (b.length) { cleanup(); resolve(b); } };
-        const timer = setTimeout(() => { cleanup(); resolve([]); }, timeoutMs);
-        const cleanup = () => { clearTimeout(timer); (this.source as EventEmitter).off('message', onMsg); };
+        const onMsg = () => {
+          const b = ready();
+          if (b.length) {
+            cleanup();
+            resolve(b);
+          }
+        };
+        const timer = setTimeout(() => {
+          cleanup();
+          resolve([]);
+        }, timeoutMs);
+        const cleanup = () => {
+          clearTimeout(timer);
+          (this.source as EventEmitter).off('message', onMsg);
+        };
         (this.source as EventEmitter).on('message', onMsg);
       });
     }
@@ -135,10 +173,15 @@ export class TunnelSession {
   }
 
   status(): SessionStatus {
-    const peerConnected = this.role === 'host'
-      ? !!this.relay?.peerConnected
-      : !!this.guest?.connected;
-    return { role: this.role ?? 'host', peerConnected, goal: this.goal, lastSeq: this.log?.lastSeq ?? 0, openedAt: this.openedAt };
+    const peerConnected =
+      this.role === 'host' ? !!this.relay?.peerConnected : !!this.guest?.connected;
+    return {
+      role: this.role ?? 'host',
+      peerConnected,
+      goal: this.goal,
+      lastSeq: this.log?.lastSeq ?? 0,
+      openedAt: this.openedAt,
+    };
   }
 
   async close(summary?: string): Promise<{ ok: true }> {

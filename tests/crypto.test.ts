@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
-  generateKey, keyToBase64url, keyFromBase64url,
-  seal, open, makeChallenge, respondChallenge, verifyChallenge,
+  generateKey,
+  keyToBase64url,
+  keyFromBase64url,
+  seal,
+  open,
+  makeChallenge,
+  respondChallenge,
+  verifyChallenge,
 } from '../src/protocol/crypto.js';
 
 describe('crypto', () => {

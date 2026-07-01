@@ -29,6 +29,7 @@ You may freely: send/receive tunnel messages, read your own repo, run read-only
 commands (tests, `git status`, non-mutating builds), reason, and propose.
 
 **Stop and get your human's explicit OK before you:**
+
 - write or edit any file,
 - run a non-read-only or risky command,
 - declare the goal **confirmed / fixed**,

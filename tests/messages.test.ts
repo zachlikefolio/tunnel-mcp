@@ -1,7 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { generateKey } from '../src/protocol/crypto.js';
 import {
-  buildChat, buildSystem, decrypt, encodeFrame, decodeFrame, newId, ControlFrame, WireMessage,
+  buildChat,
+  buildSystem,
+  decrypt,
+  encodeFrame,
+  decodeFrame,
+  newId,
+  ControlFrame,
+  WireMessage,
 } from '../src/protocol/messages.js';
 
 describe('messages', () => {
@@ -29,8 +36,12 @@ describe('messages', () => {
   it('decrypt() is total — a malformed chat body returns [unreadable] instead of throwing', () => {
     const key = generateKey();
     const malformed = {
-      id: 'x', seq: 1, from: 'guest' as const, kind: 'chat' as const,
-      body: 'not-valid-ciphertext', ts: Date.now(),
+      id: 'x',
+      seq: 1,
+      from: 'guest' as const,
+      kind: 'chat' as const,
+      body: 'not-valid-ciphertext',
+      ts: Date.now(),
     };
     expect(() => decrypt(malformed, key)).not.toThrow();
     const result = decrypt(malformed, key);
@@ -62,7 +73,12 @@ describe('messages', () => {
   it('decrypt() passes through a presence message body as plaintext', () => {
     const key = generateKey();
     const msg: WireMessage = {
-      id: newId(), seq: 3, from: 'guest', kind: 'presence', body: 'guest is typing', ts: 123,
+      id: newId(),
+      seq: 3,
+      from: 'guest',
+      kind: 'presence',
+      body: 'guest is typing',
+      ts: 123,
     };
     const result = decrypt(msg, key);
     expect(result.text).toBe('guest is typing');
@@ -79,7 +95,10 @@ describe('messages', () => {
 
     it('auth', () => {
       const frame: ControlFrame = {
-        t: 'auth', response: 'resp-abc', name: 'agent-1', sinceSeq: 42,
+        t: 'auth',
+        response: 'resp-abc',
+        name: 'agent-1',
+        sinceSeq: 42,
       };
       expect(decodeFrame(encodeFrame(frame))).toEqual(frame);
     });
@@ -92,7 +111,10 @@ describe('messages', () => {
         { id: newId(), seq: 5, from: 'host', kind: 'presence', body: 'typing', ts: 999 },
       ];
       const frame: ControlFrame = {
-        t: 'auth_ok', goal: 'ship the feature', peerName: 'host-agent', backlog,
+        t: 'auth_ok',
+        goal: 'ship the feature',
+        peerName: 'host-agent',
+        backlog,
       };
       const decoded = decodeFrame(encodeFrame(frame));
       expect(decoded).toEqual(frame);

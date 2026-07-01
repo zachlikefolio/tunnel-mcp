@@ -7,7 +7,9 @@ import { generateTunnelId, parseLink, mintLink } from '../src/protocol/link.js';
 import { buildChat, decrypt } from '../src/protocol/messages.js';
 
 const cleanups: Array<() => void> = [];
-afterEach(() => { while (cleanups.length) cleanups.pop()!(); });
+afterEach(() => {
+  while (cleanups.length) cleanups.pop()!();
+});
 
 async function setup(goal = 'fix the 401') {
   const key = generateKey();
@@ -18,7 +20,12 @@ async function setup(goal = 'fix the 401') {
   const link = parseLink(mintLink(`http://127.0.0.1:${port}`, tunnelId, key));
   const guestLog = new SessionLog(tunnelId + '-guest');
   const guest = new GuestClient(link, 'bob', guestLog);
-  cleanups.push(() => { guest.close(); relay.close(); hostLog.delete(); guestLog.delete(); });
+  cleanups.push(() => {
+    guest.close();
+    relay.close();
+    hostLog.delete();
+    guestLog.delete();
+  });
   return { key, relay, guest, hostLog, guestLog };
 }
 
@@ -31,9 +38,11 @@ describe('relay <-> guest', () => {
     expect(relay.peerConnected).toBe(true);
 
     // host -> guest
-    const incoming = new Promise((res) => guest.once('message', (m) => {
-      if (m.kind === 'chat') res(decrypt(m, key).text);
-    }));
+    const incoming = new Promise((res) =>
+      guest.once('message', (m) => {
+        if (m.kind === 'chat') res(decrypt(m, key).text);
+      }),
+    );
     relay.submitLocal(buildChat('host', 'whats the error', key));
     expect(await incoming).toBe('whats the error');
 
@@ -45,7 +54,9 @@ describe('relay <-> guest', () => {
   it('rejects a guest presenting the wrong key', async () => {
     const { relay } = await setup();
     const port = (relay as any).server.address().port;
-    const badLink = parseLink(mintLink(`http://127.0.0.1:${port}`, (relay as any).opts.tunnelId, generateKey()));
+    const badLink = parseLink(
+      mintLink(`http://127.0.0.1:${port}`, (relay as any).opts.tunnelId, generateKey()),
+    );
     const badGuest = new GuestClient(badLink, 'mallory', new SessionLog('bad-guest'));
     cleanups.push(() => badGuest.close());
     await expect(badGuest.connect(0)).rejects.toThrow();

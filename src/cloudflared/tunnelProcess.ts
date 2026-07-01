@@ -1,6 +1,8 @@
 import { spawn, ChildProcess } from 'node:child_process';
 import {
-  CLOUDFLARED_URL_TIMEOUT_MS, CLOUDFLARED_HEALTH_ATTEMPTS, CLOUDFLARED_HEALTH_INTERVAL_MS,
+  CLOUDFLARED_URL_TIMEOUT_MS,
+  CLOUDFLARED_HEALTH_ATTEMPTS,
+  CLOUDFLARED_HEALTH_INTERVAL_MS,
 } from '../config.js';
 
 export interface TunnelHandle {
@@ -9,12 +11,12 @@ export interface TunnelHandle {
 }
 
 export interface StartOptions {
-  timeoutMs?: number;                              // wait for the URL line
-  extraArgs?: string[];                            // tests: launch a fake binary
-  attempts?: number;                               // edge-reachability probes
-  intervalMs?: number;                             // delay between probes
+  timeoutMs?: number; // wait for the URL line
+  extraArgs?: string[]; // tests: launch a fake binary
+  attempts?: number; // edge-reachability probes
+  intervalMs?: number; // delay between probes
   healthCheck?: (url: string) => Promise<boolean>; // default: HTTP reachability
-  probeTimeoutMs?: number;                         // per-attempt budget for a health probe
+  probeTimeoutMs?: number; // per-attempt budget for a health probe
 }
 
 const URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
@@ -43,16 +45,29 @@ export async function defaultHealthCheck(url: string): Promise<boolean> {
 // never leave the loop (and therefore the outer startCloudflared promise)
 // hanging. Any failure mode here just counts as "not healthy yet".
 function probeOnce(
-  url: string, check: (u: string) => Promise<boolean>, probeTimeoutMs: number,
+  url: string,
+  check: (u: string) => Promise<boolean>,
+  probeTimeoutMs: number,
 ): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (ok: boolean) => { if (!settled) { settled = true; resolve(ok); } };
+    const finish = (ok: boolean) => {
+      if (!settled) {
+        settled = true;
+        resolve(ok);
+      }
+    };
     const timer = setTimeout(() => finish(false), probeTimeoutMs);
     Promise.resolve()
       .then(() => check(url))
-      .then((ok) => { clearTimeout(timer); finish(ok); })
-      .catch(() => { clearTimeout(timer); finish(false); });
+      .then((ok) => {
+        clearTimeout(timer);
+        finish(ok);
+      })
+      .catch(() => {
+        clearTimeout(timer);
+        finish(false);
+      });
   });
 }
 
@@ -76,7 +91,11 @@ async function waitHealthy(
  * The URL is surfaced only after a health probe confirms the edge is reachable
  * (cloudflared prints the hostname before routing is live).
  */
-export function startCloudflared(binPath: string, localPort: number, opts: StartOptions = {}): Promise<TunnelHandle> {
+export function startCloudflared(
+  binPath: string,
+  localPort: number,
+  opts: StartOptions = {},
+): Promise<TunnelHandle> {
   const args = opts.extraArgs ?? ['tunnel', '--url', `http://localhost:${localPort}`];
   const timeoutMs = opts.timeoutMs ?? CLOUDFLARED_URL_TIMEOUT_MS;
   const attempts = opts.attempts ?? CLOUDFLARED_HEALTH_ATTEMPTS;
@@ -87,10 +106,26 @@ export function startCloudflared(binPath: string, localPort: number, opts: Start
   return new Promise((resolve, reject) => {
     const child: ChildProcess = spawn(binPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let settled = false;
-    const stop = () => { try { child.kill('SIGTERM'); } catch { /* gone */ } };
-    const fail = (err: Error) => { if (!settled) { settled = true; clearTimeout(timer); stop(); reject(err); } };
+    const stop = () => {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        /* gone */
+      }
+    };
+    const fail = (err: Error) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        stop();
+        reject(err);
+      }
+    };
 
-    const timer = setTimeout(() => fail(new Error('cloudflared did not report a URL in time')), timeoutMs);
+    const timer = setTimeout(
+      () => fail(new Error('cloudflared did not report a URL in time')),
+      timeoutMs,
+    );
 
     const onData = (buf: Buffer) => {
       for (const line of buf.toString().split('\n')) {
@@ -101,7 +136,10 @@ export function startCloudflared(binPath: string, localPort: number, opts: Start
           waitHealthy(url, attempts, intervalMs, check, probeTimeoutMs)
             .then((ok) => {
               if (ok) resolve({ publicUrl: url, stop });
-              else { stop(); reject(new Error('cloudflared tunnel never became reachable')); }
+              else {
+                stop();
+                reject(new Error('cloudflared tunnel never became reachable'));
+              }
             })
             .catch((err) => {
               // Should be unreachable (waitHealthy/probeOnce never reject), but
