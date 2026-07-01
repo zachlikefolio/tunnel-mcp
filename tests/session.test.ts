@@ -7,7 +7,14 @@ import { newId } from '../src/protocol/messages.js';
 import { GuestClient } from '../src/relay/guestClient.js';
 
 const sessions: TunnelSession[] = [];
-afterEach(async () => { for (const s of sessions) { try { await s.close(); } catch {} } sessions.length = 0; });
+afterEach(async () => {
+  for (const s of sessions) {
+    try {
+      await s.close();
+    } catch {}
+  }
+  sessions.length = 0;
+});
 
 // Fake cloudflared: the "public url" points straight at the local relay port,
 // so host and guest connect over loopback with no network or real binary.
@@ -60,7 +67,9 @@ describe('TunnelSession (host <-> guest, fake cloudflared)', () => {
     const sent = await guest.say('http 401 on /auth');
     expect(sent.seq).toBeGreaterThan(0);
     const hostHeard = await host.listen(chat.seq, 3000);
-    expect(hostHeard.messages.some((m) => m.kind === 'chat' && m.text === 'http 401 on /auth')).toBe(true);
+    expect(
+      hostHeard.messages.some((m) => m.kind === 'chat' && m.text === 'http 401 on /auth'),
+    ).toBe(true);
 
     expect(host.status().peerConnected).toBe(true);
     await host.close('done');
@@ -116,7 +125,10 @@ describe('TunnelSession (host <-> guest, fake cloudflared)', () => {
     let calls = 0;
     const host = new TunnelSession({
       ensureCloudflared: async () => 'fake',
-      startCloudflared: async () => { calls++; throw new Error('boom'); },
+      startCloudflared: async () => {
+        calls++;
+        throw new Error('boom');
+      },
     });
     sessions.push(host);
     await expect(host.open('goal', 'alice')).rejects.toThrow(/after 3 attempts/);
@@ -160,7 +172,9 @@ describe('TunnelSession (host <-> guest, fake cloudflared)', () => {
     expect(bad).toBeDefined();
     expect(bad!.kind).toBe('chat');
     expect(bad!.text).toBe('[unreadable]');
-    expect(messages.some((m) => m.kind === 'chat' && m.text === 'a perfectly normal message')).toBe(true);
+    expect(messages.some((m) => m.kind === 'chat' && m.text === 'a perfectly normal message')).toBe(
+      true,
+    );
   });
 
   it('status() reports openedAt, role, goal, and an increasing lastSeq as activity occurs', async () => {
@@ -207,7 +221,9 @@ describe('TunnelSession (host <-> guest, fake cloudflared)', () => {
     // the guest's local log before join() resolves, so listen(0) must return
     // it immediately without waiting on a live 'message' event.
     const backlog = await guest.listen(0, 500);
-    const seen = backlog.messages.find((m) => m.kind === 'chat' && m.text === 'this happened before you joined');
+    const seen = backlog.messages.find(
+      (m) => m.kind === 'chat' && m.text === 'this happened before you joined',
+    );
     expect(seen).toBeDefined();
     expect(seen!.seq).toBe(early.seq);
   });

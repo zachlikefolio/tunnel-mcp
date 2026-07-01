@@ -21,7 +21,9 @@ describe('link', () => {
 
   it('rejects a link without a tunnel id', () => {
     const key = generateKey();
-    expect(() => parseLink(`wss://x.trycloudflare.com/nope#${Buffer.from(key).toString('base64url')}`)).toThrow();
+    expect(() =>
+      parseLink(`wss://x.trycloudflare.com/nope#${Buffer.from(key).toString('base64url')}`),
+    ).toThrow();
   });
 
   it('converts an http:// base to ws:// (not just https->wss)', () => {
@@ -58,9 +60,15 @@ describe('link', () => {
   it('throws on a path that is not /t/<hexid>', () => {
     const key = generateKey();
     const keyPart = keyToBase64url(key);
-    expect(() => parseLink(`wss://x.trycloudflare.com/t/nothex#${keyPart}`)).toThrow(/link missing tunnel id/);
-    expect(() => parseLink(`wss://x.trycloudflare.com/tunnels/abc123#${keyPart}`)).toThrow(/link missing tunnel id/);
-    expect(() => parseLink(`wss://x.trycloudflare.com/t/abc123/extra#${keyPart}`)).toThrow(/link missing tunnel id/);
+    expect(() => parseLink(`wss://x.trycloudflare.com/t/nothex#${keyPart}`)).toThrow(
+      /link missing tunnel id/,
+    );
+    expect(() => parseLink(`wss://x.trycloudflare.com/tunnels/abc123#${keyPart}`)).toThrow(
+      /link missing tunnel id/,
+    );
+    expect(() => parseLink(`wss://x.trycloudflare.com/t/abc123/extra#${keyPart}`)).toThrow(
+      /link missing tunnel id/,
+    );
   });
 
   it('excludes the "#key" fragment from wsUrl', () => {

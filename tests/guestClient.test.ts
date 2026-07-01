@@ -7,7 +7,9 @@ import { generateTunnelId, parseLink, mintLink } from '../src/protocol/link.js';
 import { buildChat, buildSystem, decrypt } from '../src/protocol/messages.js';
 
 const cleanups: Array<() => void> = [];
-afterEach(() => { while (cleanups.length) cleanups.pop()!(); });
+afterEach(() => {
+  while (cleanups.length) cleanups.pop()!();
+});
 
 async function setup(goal = 'debug the flaky test') {
   const key = generateKey();
@@ -21,7 +23,12 @@ async function setup(goal = 'debug the flaky test') {
   const guestLogId = generateTunnelId();
   const guestLog = new SessionLog(guestLogId);
   const guest = new GuestClient(link, 'bob', guestLog);
-  cleanups.push(() => { guest.close(); relay.close(); hostLog.delete(); guestLog.delete(); });
+  cleanups.push(() => {
+    guest.close();
+    relay.close();
+    hostLog.delete();
+    guestLog.delete();
+  });
   return { key, relay, guest, hostLog, guestLog };
 }
 
@@ -111,6 +118,10 @@ describe('GuestClient', () => {
     });
 
     relay.submitLocal(buildChat('host', 'look at the logs', key));
-    await expect(received).resolves.toEqual({ kind: 'chat', from: 'host', text: 'look at the logs' });
+    await expect(received).resolves.toEqual({
+      kind: 'chat',
+      from: 'host',
+      text: 'look at the logs',
+    });
   });
 });

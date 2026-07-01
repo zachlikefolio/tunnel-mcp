@@ -51,7 +51,11 @@ export class SessionLog {
   }
 
   delete(): void {
-    try { fs.rmSync(this.filePath); } catch { /* already gone */ }
+    try {
+      fs.rmSync(this.filePath);
+    } catch {
+      /* already gone */
+    }
     this.msgs = [];
     this.closed = true;
   }

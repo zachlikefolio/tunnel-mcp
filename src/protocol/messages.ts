@@ -6,11 +6,11 @@ export type Role = 'host' | 'guest';
 
 export interface WireMessage {
   id: string;
-  seq: number;   // -1 until the host relay assigns it
+  seq: number; // -1 until the host relay assigns it
   from: Role;
   kind: MessageKind;
-  body: string;  // chat: ciphertext; system/presence: plaintext
-  ts: number;    // 0 until the host relay assigns it
+  body: string; // chat: ciphertext; system/presence: plaintext
+  ts: number; // 0 until the host relay assigns it
 }
 
 export interface PlainMessage {

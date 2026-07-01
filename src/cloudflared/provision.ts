@@ -8,7 +8,8 @@ import { Readable } from 'node:stream';
 import { BIN_DIR } from '../config.js';
 
 const RELEASE_BASE = 'https://github.com/cloudflare/cloudflared/releases/latest/download';
-const MANUAL_INSTALL_POINTER = 'https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/';
+const MANUAL_INSTALL_POINTER =
+  'https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/';
 
 function arch2cf(arch: string): string {
   if (arch === 'x64') return 'amd64';
@@ -31,9 +32,13 @@ export function cloudflaredDownloadUrl(platform: NodeJS.Platform, arch: string):
 function onPath(): string | null {
   try {
     const cmd = process.platform === 'win32' ? 'where cloudflared' : 'command -v cloudflared';
-    const out = execSync(cmd, { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    const out = execSync(cmd, { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .trim();
     return out.split('\n')[0] || null;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 // Move src -> dest atomically. fs.renameSync is atomic within a filesystem; if src/dest
@@ -114,7 +119,9 @@ export async function downloadCloudflared(
     rmQuiet(tmpFile);
     rmQuiet(tmpExtractDir);
     const cause = err instanceof Error ? err.message : String(err);
-    throw new Error(`cloudflared download/install failed: ${cause}. Install it manually: ${MANUAL_INSTALL_POINTER}`);
+    throw new Error(
+      `cloudflared download/install failed: ${cause}. Install it manually: ${MANUAL_INSTALL_POINTER}`,
+    );
   }
 
   rmQuiet(tmpFile);

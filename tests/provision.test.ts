@@ -12,18 +12,21 @@ import {
 
 describe('cloudflared provision', () => {
   it('maps darwin/arm64 to the tgz release asset', () => {
-    expect(cloudflaredDownloadUrl('darwin', 'arm64'))
-      .toBe('https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz');
+    expect(cloudflaredDownloadUrl('darwin', 'arm64')).toBe(
+      'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz',
+    );
   });
 
   it('maps linux/x64 to the amd64 raw binary', () => {
-    expect(cloudflaredDownloadUrl('linux', 'x64'))
-      .toBe('https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64');
+    expect(cloudflaredDownloadUrl('linux', 'x64')).toBe(
+      'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64',
+    );
   });
 
   it('maps win32/x64 to the .exe asset', () => {
-    expect(cloudflaredDownloadUrl('win32', 'x64'))
-      .toBe('https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe');
+    expect(cloudflaredDownloadUrl('win32', 'x64')).toBe(
+      'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe',
+    );
   });
 
   it('names the binary per platform', () => {
@@ -38,10 +41,12 @@ describe('cloudflared provision', () => {
 
 // Target the RAW (non-.tgz) asset path so `tar` is never invoked — these tests
 // run with no real network access and no real `cloudflared` binary.
-const RAW_URL = 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64';
+const RAW_URL =
+  'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64';
 
 // A distinctive URL ending in `.tgz` so downloadCloudflared takes the tar-extraction branch.
-const TGZ_URL = 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz';
+const TGZ_URL =
+  'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz';
 
 describe('downloadCloudflared', () => {
   let tmpDir: string | undefined;
@@ -85,10 +90,15 @@ describe('downloadCloudflared', () => {
 
   it('a non-OK response produces a readable error with the manual-install pointer and leaves no file at dest', async () => {
     const dest = freshDest();
-    const fetchImpl = (async () => ({ ok: false, status: 503, body: null })) as unknown as typeof fetch;
+    const fetchImpl = (async () => ({
+      ok: false,
+      status: 503,
+      body: null,
+    })) as unknown as typeof fetch;
 
-    await expect(downloadCloudflared(RAW_URL, dest, { fetchImpl }))
-      .rejects.toThrow(/developers\.cloudflare\.com\/cloudflare-one\/connections\/connect-networks\/downloads\//);
+    await expect(downloadCloudflared(RAW_URL, dest, { fetchImpl })).rejects.toThrow(
+      /developers\.cloudflare\.com\/cloudflare-one\/connections\/connect-networks\/downloads\//,
+    );
 
     expect(fs.existsSync(dest)).toBe(false);
   });
@@ -108,8 +118,9 @@ describe('downloadCloudflared', () => {
     });
     const fetchImpl = (async () => ({ ok: true, status: 200, body })) as unknown as typeof fetch;
 
-    await expect(downloadCloudflared(RAW_URL, dest, { fetchImpl }))
-      .rejects.toThrow(/cloudflared download\/install failed/);
+    await expect(downloadCloudflared(RAW_URL, dest, { fetchImpl })).rejects.toThrow(
+      /cloudflared download\/install failed/,
+    );
 
     expect(fs.existsSync(dest)).toBe(false);
   });

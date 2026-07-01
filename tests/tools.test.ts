@@ -8,8 +8,12 @@ function fakeServer() {
   const tools: Record<string, (args: any) => Promise<any>> = {};
   return {
     tools,
-    registerTool(name: string, _schema: any, cb: (args: any) => Promise<any>) { tools[name] = cb; },
-    tool(name: string, _schema: any, cb: (args: any) => Promise<any>) { tools[name] = cb; },
+    registerTool(name: string, _schema: any, cb: (args: any) => Promise<any>) {
+      tools[name] = cb;
+    },
+    tool(name: string, _schema: any, cb: (args: any) => Promise<any>) {
+      tools[name] = cb;
+    },
   } as any;
 }
 
@@ -18,14 +22,25 @@ describe('registerTools', () => {
     const server = fakeServer();
     registerTools(server, new TunnelSession(), { displayName: 'alice' });
     expect(Object.keys(server.tools).sort()).toEqual(
-      ['tunnel_close', 'tunnel_join', 'tunnel_listen', 'tunnel_open', 'tunnel_say', 'tunnel_status'].sort(),
+      [
+        'tunnel_close',
+        'tunnel_join',
+        'tunnel_listen',
+        'tunnel_open',
+        'tunnel_say',
+        'tunnel_status',
+      ].sort(),
     );
   });
 
   it('tunnel_open delegates to the session and returns text content', async () => {
     const server = fakeServer();
     const session = new TunnelSession();
-    vi.spyOn(session, 'open').mockResolvedValue({ tunnelId: 'id1', joinLink: 'wss://x/t/id1#k', status: 'waiting_for_guest' });
+    vi.spyOn(session, 'open').mockResolvedValue({
+      tunnelId: 'id1',
+      joinLink: 'wss://x/t/id1#k',
+      status: 'waiting_for_guest',
+    });
     registerTools(server, session, { displayName: 'alice' });
 
     const res = await server.tools['tunnel_open']({ goal: 'fix it' });
@@ -92,7 +107,13 @@ describe('registerTools', () => {
   it('tunnel_status delegates to session.status with no args', async () => {
     const server = fakeServer();
     const session = new TunnelSession();
-    const statusResult = { role: 'host', peerConnected: false, goal: 'x', lastSeq: 0, openedAt: 123 };
+    const statusResult = {
+      role: 'host',
+      peerConnected: false,
+      goal: 'x',
+      lastSeq: 0,
+      openedAt: 123,
+    };
     vi.spyOn(session, 'status').mockReturnValue(statusResult as any);
     registerTools(server, session, { displayName: 'alice' });
 

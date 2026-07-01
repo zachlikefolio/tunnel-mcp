@@ -6,7 +6,11 @@ import { SessionLog } from '../src/log/sessionLog.js';
 import { buildSystem } from '../src/protocol/messages.js';
 
 const ID = 'testsession01';
-afterEach(() => { try { fs.rmSync(path.join(SESSIONS_DIR, `${ID}.jsonl`)); } catch {} });
+afterEach(() => {
+  try {
+    fs.rmSync(path.join(SESSIONS_DIR, `${ID}.jsonl`));
+  } catch {}
+});
 
 describe('SessionLog', () => {
   it('append assigns monotonic seq and persists to jsonl', () => {
@@ -16,7 +20,10 @@ describe('SessionLog', () => {
     expect(a.seq).toBe(1);
     expect(b.seq).toBe(2);
     expect(log.lastSeq).toBe(2);
-    const file = fs.readFileSync(path.join(SESSIONS_DIR, `${ID}.jsonl`), 'utf8').trim().split('\n');
+    const file = fs
+      .readFileSync(path.join(SESSIONS_DIR, `${ID}.jsonl`), 'utf8')
+      .trim()
+      .split('\n');
     expect(file).toHaveLength(2);
   });
 
@@ -24,14 +31,14 @@ describe('SessionLog', () => {
     const log = new SessionLog(ID);
     log.append(buildSystem('host', 'one'));
     const b = log.append(buildSystem('host', 'two'));
-    expect(log.since(1).map(m => m.id)).toEqual([b.id]);
+    expect(log.since(1).map((m) => m.id)).toEqual([b.id]);
   });
 
   it('record stores an already-seq message without re-seqing', () => {
     const log = new SessionLog(ID);
     log.record({ id: 'x', seq: 5, from: 'guest', kind: 'system', body: 'hi', ts: 1 });
     expect(log.lastSeq).toBe(5);
-    expect(log.since(4).map(m => m.id)).toEqual(['x']);
+    expect(log.since(4).map((m) => m.id)).toEqual(['x']);
   });
 
   it('delete clears memory and removes the file', () => {
@@ -71,12 +78,15 @@ describe('SessionLog', () => {
 });
 
 describe('SessionLog (edge cases)', () => {
-  const uniqueId = () => `sessionlog-edge-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const uniqueId = () =>
+    `sessionlog-edge-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   let currentId: string;
 
   afterEach(() => {
     if (currentId) {
-      try { fs.rmSync(path.join(SESSIONS_DIR, `${currentId}.jsonl`)); } catch {}
+      try {
+        fs.rmSync(path.join(SESSIONS_DIR, `${currentId}.jsonl`));
+      } catch {}
     }
   });
 
@@ -107,9 +117,9 @@ describe('SessionLog (edge cases)', () => {
     const b = log.append(buildSystem('host', 'two'));
     const c = log.append(buildSystem('host', 'three'));
 
-    expect(log.since(0).map(m => m.id)).toEqual([a.id, b.id, c.id]);
+    expect(log.since(0).map((m) => m.id)).toEqual([a.id, b.id, c.id]);
     expect(log.since(log.lastSeq)).toEqual([]);
-    expect(log.since(b.seq).map(m => m.id)).toEqual([c.id]);
+    expect(log.since(b.seq).map((m) => m.id)).toEqual([c.id]);
   });
 
   it('multiple appends write multiple jsonl lines with monotonically increasing seq', () => {
@@ -123,12 +133,12 @@ describe('SessionLog (edge cases)', () => {
       results.push(log.append(buildSystem('host', `msg-${i}`)));
     }
 
-    const seqs = results.map(m => m.seq);
+    const seqs = results.map((m) => m.seq);
     expect(seqs).toEqual([1, 2, 3, 4, 5]);
 
     const lines = fs.readFileSync(filePath, 'utf8').trim().split('\n');
     expect(lines).toHaveLength(n);
-    const parsedSeqs = lines.map(l => JSON.parse(l).seq);
+    const parsedSeqs = lines.map((l) => JSON.parse(l).seq);
     expect(parsedSeqs).toEqual([1, 2, 3, 4, 5]);
   });
 

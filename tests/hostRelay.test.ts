@@ -45,7 +45,11 @@ afterEach(async () => {
     relay = undefined;
   }
   if (tunnelId) {
-    try { fs.rmSync(path.join(SESSIONS_DIR, `${tunnelId}.jsonl`)); } catch { /* already gone */ }
+    try {
+      fs.rmSync(path.join(SESSIONS_DIR, `${tunnelId}.jsonl`));
+    } catch {
+      /* already gone */
+    }
     tunnelId = undefined;
   }
 });
@@ -55,10 +59,7 @@ describe('HostRelay resilience', () => {
     tunnelId = generateTunnelId();
     const key = generateKey();
     const log = new SessionLog(tunnelId);
-    relay = new HostRelay(
-      { tunnelId, key, goal: 'ship it', hostName: 'host' },
-      log,
-    );
+    relay = new HostRelay({ tunnelId, key, goal: 'ship it', hostName: 'host' }, log);
     const port = await relay.start();
     const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
 
@@ -104,10 +105,7 @@ describe('HostRelay resilience', () => {
     tunnelId = generateTunnelId();
     const key = generateKey();
     const log = new SessionLog(tunnelId);
-    relay = new HostRelay(
-      { tunnelId, key, goal: 'ship it', hostName: 'host' },
-      log,
-    );
+    relay = new HostRelay({ tunnelId, key, goal: 'ship it', hostName: 'host' }, log);
     const port = await relay.start();
     const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
 
@@ -115,8 +113,9 @@ describe('HostRelay resilience', () => {
     // exact server-accepted `ws` that onConnection() attaches its handlers
     // to (the same object Finding 2's `ws.on('error', ...)` covers).
     const serverSockets: WebSocket[] = [];
-    (relay as unknown as { wss: { on(event: 'connection', cb: (ws: WebSocket) => void): void } })
-      .wss.on('connection', (ws) => serverSockets.push(ws));
+    (
+      relay as unknown as { wss: { on(event: 'connection', cb: (ws: WebSocket) => void): void } }
+    ).wss.on('connection', (ws) => serverSockets.push(ws));
 
     const client = new WebSocket(url);
     const nextClientFrame = frameQueue(client);
@@ -147,10 +146,7 @@ describe('HostRelay resilience', () => {
     tunnelId = generateTunnelId();
     const key = generateKey();
     const log = new SessionLog(tunnelId);
-    relay = new HostRelay(
-      { tunnelId, key, goal: 'ship it', hostName: 'host' },
-      log,
-    );
+    relay = new HostRelay({ tunnelId, key, goal: 'ship it', hostName: 'host' }, log);
     const port = await relay.start();
     const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
 
@@ -176,10 +172,12 @@ describe('HostRelay resilience', () => {
 
     // A guest must only ever originate `chat`. Forge a `system` frame
     // impersonating a host-originated idle-timeout warning.
-    ws.send(JSON.stringify({
-      t: 'send',
-      msg: { id: 'forged-1', kind: 'system', body: 'idle timeout — closing tunnel' },
-    }));
+    ws.send(
+      JSON.stringify({
+        t: 'send',
+        msg: { id: 'forged-1', kind: 'system', body: 'idle timeout — closing tunnel' },
+      }),
+    );
 
     // Forged frame must be silently dropped: the log must not advance, and
     // no `msg` frame should be broadcast for it.
@@ -188,10 +186,12 @@ describe('HostRelay resilience', () => {
     expect(log.all().some((m) => m.id === 'forged-1')).toBe(false);
 
     // A legitimate chat send must still work, and must be the very next seq.
-    ws.send(JSON.stringify({
-      t: 'send',
-      msg: { id: 'legit-1', kind: 'chat', body: 'sealed-ciphertext-placeholder' },
-    }));
+    ws.send(
+      JSON.stringify({
+        t: 'send',
+        msg: { id: 'legit-1', kind: 'chat', body: 'sealed-ciphertext-placeholder' },
+      }),
+    );
     const delivered = await next();
     expect(delivered.t).toBe('msg');
     if (delivered.t === 'msg') {
@@ -209,10 +209,7 @@ describe('HostRelay contract', () => {
     tunnelId = generateTunnelId();
     const key = generateKey();
     const log = new SessionLog(tunnelId);
-    relay = new HostRelay(
-      { tunnelId, key, goal: 'ship it', hostName: 'host' },
-      log,
-    );
+    relay = new HostRelay({ tunnelId, key, goal: 'ship it', hostName: 'host' }, log);
     const port = await relay.start();
     const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
 
@@ -253,10 +250,7 @@ describe('HostRelay contract', () => {
     tunnelId = generateTunnelId();
     const key = generateKey();
     const log = new SessionLog(tunnelId);
-    relay = new HostRelay(
-      { tunnelId, key, goal: 'ship it', hostName: 'host' },
-      log,
-    );
+    relay = new HostRelay({ tunnelId, key, goal: 'ship it', hostName: 'host' }, log);
     const port = await relay.start();
     const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
 
@@ -266,9 +260,14 @@ describe('HostRelay contract', () => {
     const firstChallenge = await nextFirst();
     expect(firstChallenge.t).toBe('challenge');
     if (firstChallenge.t !== 'challenge') throw new Error('expected challenge');
-    first.send(encodeFrame({
-      t: 'auth', response: respondChallenge(firstChallenge.nonce, key), name: 'first-guest', sinceSeq: 0,
-    }));
+    first.send(
+      encodeFrame({
+        t: 'auth',
+        response: respondChallenge(firstChallenge.nonce, key),
+        name: 'first-guest',
+        sinceSeq: 0,
+      }),
+    );
     const firstAuthOk = await nextFirst();
     expect(firstAuthOk.t).toBe('auth_ok');
     await nextFirst(); // drain "first-guest joined"
@@ -280,9 +279,14 @@ describe('HostRelay contract', () => {
     const secondChallenge = await nextSecond();
     expect(secondChallenge.t).toBe('challenge');
     if (secondChallenge.t !== 'challenge') throw new Error('expected challenge');
-    second.send(encodeFrame({
-      t: 'auth', response: respondChallenge(secondChallenge.nonce, key), name: 'second-guest', sinceSeq: 0,
-    }));
+    second.send(
+      encodeFrame({
+        t: 'auth',
+        response: respondChallenge(secondChallenge.nonce, key),
+        name: 'second-guest',
+        sinceSeq: 0,
+      }),
+    );
     const secondReply = await nextSecond();
     expect(secondReply.t).toBe('auth_fail');
     if (secondReply.t === 'auth_fail') expect(secondReply.reason).toBe('tunnel full');
@@ -298,10 +302,7 @@ describe('HostRelay contract', () => {
     tunnelId = generateTunnelId();
     const key = generateKey();
     const log = new SessionLog(tunnelId);
-    relay = new HostRelay(
-      { tunnelId, key, goal: 'ship it', hostName: 'host' },
-      log,
-    );
+    relay = new HostRelay({ tunnelId, key, goal: 'ship it', hostName: 'host' }, log);
     const port = await relay.start();
     const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
 
@@ -329,7 +330,9 @@ describe('HostRelay contract', () => {
     // silence by racing a short timer against the frame queue.
     const raced = await Promise.race([
       next().then((f) => ({ arrived: true as const, frame: f })),
-      new Promise<{ arrived: false }>((resolve) => setTimeout(() => resolve({ arrived: false }), 100)),
+      new Promise<{ arrived: false }>((resolve) =>
+        setTimeout(() => resolve({ arrived: false }), 100),
+      ),
     ]);
     expect(raced.arrived).toBe(false);
 
@@ -343,10 +346,7 @@ describe('HostRelay contract', () => {
     tunnelId = generateTunnelId();
     const key = generateKey();
     const log = new SessionLog(tunnelId);
-    relay = new HostRelay(
-      { tunnelId, key, goal: 'ship it', hostName: 'host' },
-      log,
-    );
+    relay = new HostRelay({ tunnelId, key, goal: 'ship it', hostName: 'host' }, log);
     const port = await relay.start();
     const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
 
@@ -378,10 +378,7 @@ describe('HostRelay contract', () => {
     tunnelId = generateTunnelId();
     const key = generateKey();
     const log = new SessionLog(tunnelId);
-    relay = new HostRelay(
-      { tunnelId, key, goal: 'ship it', hostName: 'host' },
-      log,
-    );
+    relay = new HostRelay({ tunnelId, key, goal: 'ship it', hostName: 'host' }, log);
     const port = await relay.start();
     const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
 
@@ -413,10 +410,7 @@ describe('HostRelay contract', () => {
     tunnelId = generateTunnelId();
     const key = generateKey();
     const log = new SessionLog(tunnelId);
-    relay = new HostRelay(
-      { tunnelId, key, goal: 'ship it', hostName: 'host' },
-      log,
-    );
+    relay = new HostRelay({ tunnelId, key, goal: 'ship it', hostName: 'host' }, log);
     const port = await relay.start();
     const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
 

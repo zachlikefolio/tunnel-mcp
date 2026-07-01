@@ -20,15 +20,23 @@ describe('parsePublicUrl', () => {
 describe('startCloudflared', () => {
   function writeFake(): string {
     // Fake binary: a node script that prints a trycloudflare URL then idles.
-    const fake = path.join(os.tmpdir(), `fake-cf-${Date.now()}-${Math.round(performance.now())}.mjs`);
-    fs.writeFileSync(fake, `console.error('INF https://fake-tunnel-1.trycloudflare.com'); setInterval(()=>{}, 1000);`);
+    const fake = path.join(
+      os.tmpdir(),
+      `fake-cf-${Date.now()}-${Math.round(performance.now())}.mjs`,
+    );
+    fs.writeFileSync(
+      fake,
+      `console.error('INF https://fake-tunnel-1.trycloudflare.com'); setInterval(()=>{}, 1000);`,
+    );
     return fake;
   }
 
   it('resolves with the parsed url from a fake cloudflared and stops it', async () => {
     const fake = writeFake();
     const handle = await startCloudflared(process.execPath, 12345, {
-      timeoutMs: 5000, extraArgs: [fake], healthCheck: async () => true,
+      timeoutMs: 5000,
+      extraArgs: [fake],
+      healthCheck: async () => true,
     });
     expect(handle.publicUrl).toBe('https://fake-tunnel-1.trycloudflare.com');
     handle.stop();
@@ -40,7 +48,9 @@ describe('startCloudflared', () => {
     try {
       let probes = 0;
       const handle = await startCloudflared(process.execPath, 0, {
-        extraArgs: [fake], intervalMs: 10, attempts: 5,
+        extraArgs: [fake],
+        intervalMs: 10,
+        attempts: 5,
         healthCheck: async () => ++probes >= 3, // unhealthy twice, then healthy
       });
       expect(probes).toBeGreaterThanOrEqual(3);
@@ -56,7 +66,9 @@ describe('startCloudflared', () => {
     try {
       await expect(
         startCloudflared(process.execPath, 0, {
-          extraArgs: [fake], intervalMs: 5, attempts: 3,
+          extraArgs: [fake],
+          intervalMs: 5,
+          attempts: 3,
           healthCheck: async () => false,
         }),
       ).rejects.toThrow(/never became reachable/);
@@ -70,8 +82,12 @@ describe('startCloudflared', () => {
     try {
       await expect(
         startCloudflared(process.execPath, 0, {
-          extraArgs: [fake], intervalMs: 5, attempts: 3,
-          healthCheck: async () => { throw new Error('boom'); },
+          extraArgs: [fake],
+          intervalMs: 5,
+          attempts: 3,
+          healthCheck: async () => {
+            throw new Error('boom');
+          },
         }),
       ).rejects.toThrow(/never became reachable/);
     } finally {
@@ -85,8 +101,14 @@ describe('startCloudflared', () => {
       const start = Date.now();
       await expect(
         startCloudflared(process.execPath, 0, {
-          extraArgs: [fake], intervalMs: 5, attempts: 3, probeTimeoutMs: 20,
-          healthCheck: () => new Promise(() => { /* never resolves */ }),
+          extraArgs: [fake],
+          intervalMs: 5,
+          attempts: 3,
+          probeTimeoutMs: 20,
+          healthCheck: () =>
+            new Promise(() => {
+              /* never resolves */
+            }),
         }),
       ).rejects.toThrow(/never became reachable/);
       // 3 attempts * (20ms probe timeout + 5ms interval) plus slack — well under
@@ -99,7 +121,8 @@ describe('startCloudflared', () => {
 
   it('rejects when cloudflared never reports a url in time', async () => {
     const fake = path.join(
-      os.tmpdir(), `fake-cf-nourl-${Date.now()}-${Math.round(performance.now())}.mjs`,
+      os.tmpdir(),
+      `fake-cf-nourl-${Date.now()}-${Math.round(performance.now())}.mjs`,
     );
     fs.writeFileSync(fake, `console.error('INF starting tunnel'); setInterval(()=>{}, 1000);`);
     try {
@@ -113,7 +136,8 @@ describe('startCloudflared', () => {
 
   it('rejects when the fake binary exits immediately without printing a url', async () => {
     const fake = path.join(
-      os.tmpdir(), `fake-cf-exit-${Date.now()}-${Math.round(performance.now())}.mjs`,
+      os.tmpdir(),
+      `fake-cf-exit-${Date.now()}-${Math.round(performance.now())}.mjs`,
     );
     fs.writeFileSync(fake, `console.error('INF no url here, just exiting'); process.exit(0);`);
     try {
@@ -127,7 +151,8 @@ describe('startCloudflared', () => {
 
   it('rejects via the error event when spawning a non-existent binary path', async () => {
     const missingBin = path.join(
-      os.tmpdir(), `no-such-cloudflared-binary-${Date.now()}-${Math.round(performance.now())}`,
+      os.tmpdir(),
+      `no-such-cloudflared-binary-${Date.now()}-${Math.round(performance.now())}`,
     );
     // Sanity check: nothing lives at this path.
     expect(fs.existsSync(missingBin)).toBe(false);
