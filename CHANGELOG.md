@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet.
 
+## [0.1.6] - 2026-07-01
+
+### Security
+
+- **The auto-downloaded cloudflared binary is now pinned and integrity-verified.**
+  Instead of pulling `releases/latest` unverified, tunnel-mcp downloads a pinned
+  cloudflared version and checks its SHA-256 against a hash committed in the
+  source (and covered by the npm provenance attestation) before the binary is
+  extracted, installed, or made executable — so a tampered or wrong-version
+  binary is refused, not run. Bump with `scripts/refresh-cloudflared-hashes.mjs`.
+- **Supply-chain hardening of the pipeline:** every GitHub Action is pinned to a
+  full commit SHA (not a mutable tag), workflow token permissions default to
+  read-only, a `dependency-review` gate blocks PRs that introduce known-vulnerable
+  dependencies, and OpenSSF Scorecard + CodeQL scanning run on the repository. See
+  the new "Supply chain" section in `SECURITY.md`.
+
 ## [0.1.5] - 2026-07-01
 
 ### Changed
@@ -132,7 +148,8 @@ install-skill` copies the `tunnel-etiquette` skill into `~/.claude/skills`
   declaring a fix "confirmed".
 - Test suite of 109 tests built with vitest, developed test-first (TDD).
 
-[Unreleased]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.2...v0.1.3

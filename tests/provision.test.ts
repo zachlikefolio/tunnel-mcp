@@ -7,26 +7,33 @@ import { execFileSync } from 'node:child_process';
 import {
   cloudflaredDownloadUrl,
   cloudflaredBinName,
+  cloudflaredAsset,
+  expectedSha256,
+  CLOUDFLARED_VERSION,
+  CLOUDFLARED_SHA256,
   downloadCloudflared,
 } from '../src/cloudflared/provision.js';
 
+const PIN = `https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}`;
+
 describe('cloudflared provision', () => {
-  it('maps darwin/arm64 to the tgz release asset', () => {
-    expect(cloudflaredDownloadUrl('darwin', 'arm64')).toBe(
-      'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz',
+  it('downloads a PINNED version, not "latest"', () => {
+    expect(cloudflaredDownloadUrl('darwin', 'arm64')).not.toContain('/latest/');
+    expect(cloudflaredDownloadUrl('darwin', 'arm64')).toContain(
+      `/download/${CLOUDFLARED_VERSION}/`,
     );
+  });
+
+  it('maps darwin/arm64 to the tgz release asset', () => {
+    expect(cloudflaredDownloadUrl('darwin', 'arm64')).toBe(`${PIN}/cloudflared-darwin-arm64.tgz`);
   });
 
   it('maps linux/x64 to the amd64 raw binary', () => {
-    expect(cloudflaredDownloadUrl('linux', 'x64')).toBe(
-      'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64',
-    );
+    expect(cloudflaredDownloadUrl('linux', 'x64')).toBe(`${PIN}/cloudflared-linux-amd64`);
   });
 
   it('maps win32/x64 to the .exe asset', () => {
-    expect(cloudflaredDownloadUrl('win32', 'x64')).toBe(
-      'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe',
-    );
+    expect(cloudflaredDownloadUrl('win32', 'x64')).toBe(`${PIN}/cloudflared-windows-amd64.exe`);
   });
 
   it('names the binary per platform', () => {
@@ -37,16 +44,30 @@ describe('cloudflared provision', () => {
   it('throws on an unsupported platform', () => {
     expect(() => cloudflaredDownloadUrl('aix' as NodeJS.Platform, 'x64')).toThrow();
   });
+
+  it('ships a pinned checksum for every asset it can download, and the URL/hash keys agree', () => {
+    for (const [platform, arch] of [
+      ['darwin', 'x64'],
+      ['darwin', 'arm64'],
+      ['linux', 'x64'],
+      ['linux', 'arm64'],
+      ['win32', 'x64'],
+    ] as const) {
+      const asset = cloudflaredAsset(platform, arch);
+      expect(cloudflaredDownloadUrl(platform, arch).endsWith(asset)).toBe(true);
+      // 64-hex SHA-256, present for exactly the asset the URL points at.
+      expect(expectedSha256(platform, arch)).toMatch(/^[0-9a-f]{64}$/);
+      expect(CLOUDFLARED_SHA256[asset]).toBe(expectedSha256(platform, arch));
+    }
+  });
 });
 
 // Target the RAW (non-.tgz) asset path so `tar` is never invoked — these tests
 // run with no real network access and no real `cloudflared` binary.
-const RAW_URL =
-  'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64';
+const RAW_URL = `${PIN}/cloudflared-linux-amd64`;
 
 // A distinctive URL ending in `.tgz` so downloadCloudflared takes the tar-extraction branch.
-const TGZ_URL =
-  'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz';
+const TGZ_URL = `${PIN}/cloudflared-darwin-arm64.tgz`;
 
 describe('downloadCloudflared', () => {
   let tmpDir: string | undefined;
@@ -145,6 +166,42 @@ describe('downloadCloudflared', () => {
     // The module's own temp download file must be cleaned up. Filter to the
     // module's `cloudflared-` prefix so unrelated tmpdir entries created by
     // other test files running in parallel don't cause a false failure.
+    const leaked = [...after].filter((e) => !before.has(e) && e.startsWith('cloudflared-'));
+    expect(leaked).toEqual([]);
+  });
+
+  it('verifies the checksum and installs the binary when it matches', async () => {
+    const dest = freshDest();
+    const payload = Buffer.from(`fake-cloudflared-${crypto.randomUUID()}`, 'utf8');
+    const sha = crypto.createHash('sha256').update(payload).digest('hex');
+    const fetchImpl = (async () => ({
+      ok: true,
+      status: 200,
+      body: webStreamFromBytes(payload),
+    })) as unknown as typeof fetch;
+
+    await downloadCloudflared(RAW_URL, dest, { fetchImpl, expectedSha256: sha });
+
+    expect(fs.existsSync(dest)).toBe(true);
+    expect(fs.readFileSync(dest)).toEqual(payload);
+  });
+
+  it('rejects a checksum mismatch before installing, and leaves nothing at dest or in tmp', async () => {
+    const dest = freshDest();
+    const payload = Buffer.from(`tampered-binary-${crypto.randomUUID()}`, 'utf8');
+    const fetchImpl = (async () => ({
+      ok: true,
+      status: 200,
+      body: webStreamFromBytes(payload),
+    })) as unknown as typeof fetch;
+
+    const before = tmpdirSnapshot();
+    await expect(
+      downloadCloudflared(RAW_URL, dest, { fetchImpl, expectedSha256: 'a'.repeat(64) }),
+    ).rejects.toThrow(/checksum mismatch/);
+
+    expect(fs.existsSync(dest)).toBe(false);
+    const after = tmpdirSnapshot();
     const leaked = [...after].filter((e) => !before.has(e) && e.startsWith('cloudflared-'));
     expect(leaked).toEqual([]);
   });

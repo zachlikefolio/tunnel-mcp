@@ -83,6 +83,36 @@ share a join link with anyone.
   `tunnel_close`, an idle timeout (30 minutes with no messages), or the
   host process exiting. Nothing persists past teardown.
 
+## Supply chain
+
+tunnel-mcp is a security-sensitive tool, so its build and distribution chain is
+hardened against tampering:
+
+- **npm provenance.** Releases are published from GitHub Actions via npm Trusted
+  Publishing (OIDC) — no long-lived npm token exists — and every published
+  version carries a signed provenance attestation. You can verify a release was
+  built from this repository with `npm audit signatures`.
+- **The auto-downloaded cloudflared binary is pinned and verified.** tunnel-mcp
+  fetches a specific pinned cloudflared version and checks the artifact's SHA-256
+  against a hash committed in the source (and covered by the provenance
+  attestation) **before** it is extracted, moved into place, or made executable.
+  A mismatched or tampered binary is refused, not run.
+- **Pinned, reviewed dependencies.** Production dependencies are minimal and
+  installed from a committed lockfile with integrity hashes (`npm ci`).
+  Dependabot proposes updates, and a `dependency-review` gate blocks any pull
+  request that would introduce a dependency with a known high-severity
+  vulnerability.
+- **Pinned GitHub Actions + least privilege.** Every third-party GitHub Action is
+  pinned to a full commit SHA (not a mutable tag), and workflow `GITHUB_TOKEN`
+  permissions default to read-only, scoped up only where a job requires it.
+- **Continuous scanning.** OpenSSF Scorecard tracks the repository's
+  supply-chain posture, and CodeQL runs static analysis on every push and pull
+  request.
+
+To bump the pinned cloudflared version, a maintainer runs
+`node scripts/refresh-cloudflared-hashes.mjs <version>` and commits the updated
+version and checksums, keeping the pin auditable.
+
 ## Known Limitations / Threat Model
 
 This is an MVP and it is important to be honest about what it does **not**
