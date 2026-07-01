@@ -28,6 +28,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "dev": "tsx src/index.ts",
+    "e2e": "tsx scripts/e2e-two-agents.ts",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -62,6 +63,7 @@
     "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.109.0",
     "@types/node": "^20.14.0",
     "@types/ws": "^8.5.10",
     "@vitest/coverage-v8": "^2.0.0",
