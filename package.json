@@ -1,12 +1,60 @@
 {
   "name": "tunnel-mcp",
   "version": "0.1.0",
+  "description": "Let two developers' Claude agents talk directly through an ephemeral, end-to-end-encrypted tunnel.",
   "type": "module",
-  "bin": { "tunnel-mcp": "dist/index.js" },
+  "bin": {
+    "tunnel-mcp": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "skill",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "SECURITY.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
-    "dev": "tsx src/index.ts"
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "dev": "tsx src/index.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "claude-code",
+    "ai-agents",
+    "agent-to-agent",
+    "cloudflare-tunnel",
+    "e2e-encryption",
+    "websocket",
+    "llm"
+  ],
+  "author": "Zachary Kehl <zach@likefolio.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zachlikefolio/tunnel-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zachlikefolio/tunnel-mcp/issues"
+  },
+  "homepage": "https://github.com/zachlikefolio/tunnel-mcp#readme",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
@@ -17,8 +65,12 @@
   "devDependencies": {
     "@types/node": "^20.14.0",
     "@types/ws": "^8.5.10",
+    "@vitest/coverage-v8": "^2.0.0",
+    "eslint": "^9.9.0",
+    "prettier": "^3.3.0",
     "tsx": "^4.16.0",
     "typescript": "^5.5.0",
+    "typescript-eslint": "^8.0.0",
     "vitest": "^2.0.0"
   }
 }

@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest an idea or improvement for tunnel-mcp
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement to tunnel-mcp! Please note the project's
+        current MVP scope explicitly excludes host-offline async messaging, more than
+        two participants, ngrok/WebRTC transports, link rotation/one-time tokens, and
+        encrypting the goal/metadata — if your request touches one of these, it's still
+        welcome, but please call that out.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What problem are you trying to solve? Why does it matter?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What would you like to see happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any alternative solutions or workarounds you've considered.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope / would you help implement?
+      options:
+        - label: I'd be willing to submit a PR for this
+        - label: This would require a design discussion before implementation
+        - label: This is a small/isolated change
+        - label: This would touch security-sensitive code (encryption, auth, tunnel setup)

@@ -1,0 +1,53 @@
+# Release workflow — publishes tunnel-mcp to npm (with provenance) and cuts a
+# GitHub Release with auto-generated notes.
+#
+# Trigger: only runs on pushes of version tags matching 'v*' (e.g. v0.1.0).
+#
+# Required repository secret:
+#   NPM_TOKEN — an npm automation/publish token with rights to publish the
+#               "tunnel-mcp" package to https://registry.npmjs.org.
+#
+# No other secrets are required; GITHUB_TOKEN (provided automatically by
+# Actions) is used to create the GitHub Release.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true

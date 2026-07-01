@@ -12,7 +12,11 @@ let closing = false;
 async function teardown() {
   if (closing) return;
   closing = true;
-  try { await session.close('process exit'); } catch { /* best effort */ }
+  try {
+    await session.close('process exit');
+  } catch {
+    /* best effort */
+  }
   process.exit(0);
 }
 process.on('SIGINT', teardown);
@@ -22,8 +26,14 @@ const transport = new StdioServerTransport();
 // The host holds an HTTP/WS listener + a cloudflared child, so the event loop
 // never drains and `beforeExit` would never fire. Drive teardown off the stdio
 // pipe closing instead, which is how an MCP client actually ends the server.
-transport.onclose = () => { void teardown(); };
-process.stdin.on('end', () => { void teardown(); });
-process.stdin.on('close', () => { void teardown(); });
+transport.onclose = () => {
+  void teardown();
+};
+process.stdin.on('end', () => {
+  void teardown();
+});
+process.stdin.on('close', () => {
+  void teardown();
+});
 
 await server.connect(transport);

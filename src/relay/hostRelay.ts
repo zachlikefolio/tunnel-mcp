@@ -4,7 +4,11 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { Key, makeChallenge, verifyChallenge } from '../protocol/crypto.js';
 import { SessionLog } from '../log/sessionLog.js';
 import {
-  WireMessage, ControlFrame, encodeFrame, decodeFrame, buildSystem,
+  WireMessage,
+  ControlFrame,
+  encodeFrame,
+  decodeFrame,
+  buildSystem,
 } from '../protocol/messages.js';
 import { DEFAULT_IDLE_TEARDOWN_MS } from '../config.js';
 
@@ -25,14 +29,19 @@ export class HostRelay extends EventEmitter {
   private idleTimer?: NodeJS.Timeout;
   private tearingDown = false;
 
-  constructor(private opts: HostRelayOptions, private log: SessionLog) {
+  constructor(
+    private opts: HostRelayOptions,
+    private log: SessionLog,
+  ) {
     super();
     this.server = http.createServer();
     this.wss = new WebSocketServer({ server: this.server, path: `/t/${opts.tunnelId}` });
     this.wss.on('connection', (ws) => this.onConnection(ws));
     // A routine socket-level error (e.g. ECONNRESET on a flaky tunnel hop)
     // must never crash the host process.
-    this.wss.on('error', (err) => { console.error('[tunnel] relay server error:', err); });
+    this.wss.on('error', (err) => {
+      console.error('[tunnel] relay server error:', err);
+    });
   }
 
   start(): Promise<number> {
@@ -90,7 +99,11 @@ export class HostRelay extends EventEmitter {
       // must be defensively checked here, inside the try/catch.
       try {
         let frame: ControlFrame;
-        try { frame = decodeFrame(data.toString()); } catch { return; }
+        try {
+          frame = decodeFrame(data.toString());
+        } catch {
+          return;
+        }
 
         if (frame.t === 'auth') {
           if (typeof frame.response !== 'string' || typeof frame.name !== 'string') {
@@ -112,21 +125,24 @@ export class HostRelay extends EventEmitter {
           this.guest = ws;
           this.guestName = frame.name;
           const sinceSeq = Number.isFinite(frame.sinceSeq) ? frame.sinceSeq : 0;
-          ws.send(encodeFrame({
-            t: 'auth_ok',
-            goal: this.opts.goal,
-            peerName: this.opts.hostName,
-            backlog: this.log.since(sinceSeq),
-          }));
+          ws.send(
+            encodeFrame({
+              t: 'auth_ok',
+              goal: this.opts.goal,
+              peerName: this.opts.hostName,
+              backlog: this.log.since(sinceSeq),
+            }),
+          );
           this.submit(buildSystem('host', `${frame.name} joined`));
         } else if (frame.t === 'send') {
           if (ws !== this.guest) return; // only the authenticated guest may send
           const msg = frame.msg;
           if (
-            !msg || typeof msg !== 'object'
-            || typeof msg.id !== 'string'
-            || typeof msg.body !== 'string'
-            || msg.kind !== 'chat' // a guest may only originate chat; system/presence are host-only events
+            !msg ||
+            typeof msg !== 'object' ||
+            typeof msg.id !== 'string' ||
+            typeof msg.body !== 'string' ||
+            msg.kind !== 'chat' // a guest may only originate chat; system/presence are host-only events
           ) {
             return; // ignore malformed or forged send frames
           }
@@ -147,12 +163,15 @@ export class HostRelay extends EventEmitter {
         // may have already deleted the session log; don't emit a "left"
         // event (and don't let this late callback resurrect the log file —
         // SessionLog.append() is itself a no-op once closed, belt-and-suspenders).
-        if (!this.tearingDown) this.submit(buildSystem('host', `${this.guestName ?? 'guest'} left`));
+        if (!this.tearingDown)
+          this.submit(buildSystem('host', `${this.guestName ?? 'guest'} left`));
       }
     });
 
     // A routine socket-level error must never crash the process.
-    ws.on('error', (err) => { console.error('[tunnel] relay connection error:', err); });
+    ws.on('error', (err) => {
+      console.error('[tunnel] relay connection error:', err);
+    });
   }
 
   close(): Promise<void> {
