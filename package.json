@@ -60,7 +60,7 @@
     "@modelcontextprotocol/sdk": "^1.0.0",
     "tweetnacl": "^1.0.3",
     "ws": "^8.18.0",
-    "zod": "^3.23.0"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
