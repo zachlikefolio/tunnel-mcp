@@ -49,7 +49,22 @@ jobs:
       - name: Test
         run: npm test
 
+      # Idempotency guard: if this exact version is already on npm (e.g. the
+      # very first release was published manually), skip the publish step so the
+      # tag still produces a GitHub Release instead of failing on a duplicate.
+      - name: Check if version already published
+        id: published
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if npm view "tunnel-mcp@${VERSION}" version >/dev/null 2>&1; then
+            echo "tunnel-mcp@${VERSION} is already on npm — skipping publish."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish to npm (Trusted Publishing / OIDC)
+        if: steps.published.outputs.exists == 'false'
         run: npm publish --access public
 
       - name: Create GitHub Release
