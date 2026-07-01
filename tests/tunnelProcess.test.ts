@@ -12,6 +12,9 @@ describe('parsePublicUrl', () => {
   it('returns null for unrelated lines', () => {
     expect(parsePublicUrl('INF starting tunnel')).toBeNull();
   });
+  it('returns null for a non-trycloudflare https url', () => {
+    expect(parsePublicUrl('INF serving on https://example.com')).toBeNull();
+  });
 });
 
 describe('startCloudflared', () => {
@@ -106,5 +109,30 @@ describe('startCloudflared', () => {
     } finally {
       fs.rmSync(fake);
     }
+  });
+
+  it('rejects when the fake binary exits immediately without printing a url', async () => {
+    const fake = path.join(
+      os.tmpdir(), `fake-cf-exit-${Date.now()}-${Math.round(performance.now())}.mjs`,
+    );
+    fs.writeFileSync(fake, `console.error('INF no url here, just exiting'); process.exit(0);`);
+    try {
+      await expect(
+        startCloudflared(process.execPath, 0, { extraArgs: [fake], timeoutMs: 5000 }),
+      ).rejects.toThrow(/cloudflared exited/);
+    } finally {
+      fs.rmSync(fake);
+    }
+  });
+
+  it('rejects via the error event when spawning a non-existent binary path', async () => {
+    const missingBin = path.join(
+      os.tmpdir(), `no-such-cloudflared-binary-${Date.now()}-${Math.round(performance.now())}`,
+    );
+    // Sanity check: nothing lives at this path.
+    expect(fs.existsSync(missingBin)).toBe(false);
+    await expect(
+      startCloudflared(missingBin, 0, { extraArgs: [], timeoutMs: 5000 }),
+    ).rejects.toThrow();
   });
 });
