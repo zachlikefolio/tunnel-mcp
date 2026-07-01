@@ -33,7 +33,7 @@ export class HostRelay extends EventEmitter {
   // is consumed by the first successful authentication so it can never be reused
   // (even after that guest disconnects).
   private consumed = false;
-  private readonly joinDeadline: number;
+  private joinDeadline: number;
 
   constructor(
     private opts: HostRelayOptions,
@@ -63,6 +63,14 @@ export class HostRelay extends EventEmitter {
 
   get peerConnected(): boolean {
     return !!this.guest && this.guest.readyState === WebSocket.OPEN;
+  }
+
+  // (Re)start the single-use join link's expiry window. The session calls this
+  // once the link is actually minted (after cloudflared provisioning), so the
+  // window is measured from when the host receives the link to share — not from
+  // relay construction, which happens before provisioning could burn time.
+  armJoinDeadline(ttlMs?: number): void {
+    this.joinDeadline = Date.now() + (ttlMs ?? this.opts.joinTtlMs ?? DEFAULT_JOIN_LINK_TTL_MS);
   }
 
   submitLocal(msg: WireMessage): WireMessage {

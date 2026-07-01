@@ -151,6 +151,28 @@ describe('TunnelSession (host <-> guest, fake cloudflared)', () => {
     await expect(guest.join(opened.joinLink, 'bob')).rejects.toThrow(/expired/i);
   });
 
+  it('the join-link expiry window starts at mint time, not before cloudflared provisioning', async () => {
+    const host = new TunnelSession({
+      ensureCloudflared: async () => 'fake',
+      // Provisioning takes longer than the whole join TTL. If the window were
+      // anchored at relay construction, the link would already be "expired" the
+      // moment the host receives it — so this join would be rejected.
+      startCloudflared: async (_b: string, port: number) => {
+        await new Promise((r) => setTimeout(r, 200));
+        return { publicUrl: `http://127.0.0.1:${port}`, stop() {} };
+      },
+      joinTtlMs: 100,
+    });
+    const guest = new TunnelSession();
+    sessions.push(host, guest);
+
+    const opened = await host.open('goal', 'alice');
+    // Join right away: must succeed, because the window began when the link was
+    // minted (after the 200ms provisioning), not at relay construction.
+    const joined = await guest.join(opened.joinLink, 'bob');
+    expect(joined.goal).toBe('goal');
+  });
+
   it('listen() and say() throw a clean error after close() instead of crashing', async () => {
     const host = new TunnelSession(fakeDeps({}));
     sessions.push(host);

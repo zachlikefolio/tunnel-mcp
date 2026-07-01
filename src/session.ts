@@ -97,6 +97,10 @@ export class TunnelSession {
       );
     }
 
+    // Start the single-use link's expiry window now that the link exists —
+    // measured from mint time, not from relay construction (which happened
+    // before cloudflared provisioning could burn part of the window).
+    relay.armJoinDeadline();
     const joinLink = mintLink(tunnel.publicUrl, tunnelId, key);
     this.role = 'host';
     this.key = key;
