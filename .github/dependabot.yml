@@ -8,6 +8,18 @@ updates:
     commit-message:
       prefix: 'chore(deps)'
       prefix-development: 'chore(deps-dev)'
+    # Group updates so a routine dependency bump lands as a couple of PRs
+    # instead of one per package.
+    groups:
+      production-dependencies:
+        dependency-type: 'production'
+      development-dependencies:
+        dependency-type: 'development'
+    ignore:
+      # zod v4 is a breaking change and the MCP SDK peer-depends on zod v3.
+      # Adopt a zod major deliberately, not automatically.
+      - dependency-name: 'zod'
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: 'github-actions'
     directory: '/'
@@ -16,3 +28,6 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: 'chore(ci)'
+    groups:
+      github-actions:
+        patterns: ['*']
