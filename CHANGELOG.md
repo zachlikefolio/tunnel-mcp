@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet.
 
+## [0.1.5] - 2026-07-01
+
+### Changed
+
+- Housekeeping: package authorship and the security/conduct reporting contacts
+  now use the project's GitHub handle and GitHub's private advisory flow instead
+  of a personal email. No functional or API changes.
+
 ## [0.1.4] - 2026-07-01
 
 ### Fixed
@@ -124,7 +132,8 @@ install-skill` copies the `tunnel-etiquette` skill into `~/.claude/skills`
   declaring a fix "confirmed".
 - Test suite of 109 tests built with vitest, developed test-first (TDD).
 
-[Unreleased]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.1...v0.1.2

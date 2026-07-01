@@ -21,11 +21,10 @@ security advisories:
 2. Open the **Security** tab.
 3. Click **Report a vulnerability** to open a new draft security advisory.
 
-This creates a private conversation with the maintainer and lets us
+This creates a private conversation with the maintainers and lets us
 coordinate a fix and a disclosure timeline before any details become public.
 
-If you cannot use GitHub's advisory flow, you may instead email
-**zach@likefolio.com** with details of the issue. Please include:
+When you report, please include:
 
 - A description of the vulnerability and its potential impact.
 - Steps to reproduce, or a proof-of-concept, if available.

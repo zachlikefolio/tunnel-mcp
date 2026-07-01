@@ -178,5 +178,4 @@ security model`, `test: cover relay reconnect edge case`).
   events are plaintext metadata — don't describe a change as encrypting
   something it doesn't.
 
-Questions? Open a discussion/issue on the repo, or reach out to the
-maintainer at zach@likefolio.com.
+Questions? Open a discussion or issue on the repo.
