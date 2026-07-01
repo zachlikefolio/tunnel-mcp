@@ -68,4 +68,10 @@ describe('reachabilityMode', () => {
     process.env[REACH] = 'strict';
     expect(reachabilityMode()).toBe('strict'); // explicit mode overrides the alias
   });
+
+  it('an explicit-but-unrecognized value wins over a lingering deprecated flag (→ warn, not off)', () => {
+    process.env[REACH] = 'stict'; // typo
+    process.env[SKIP] = '1'; // stale flag left in the shell profile
+    expect(reachabilityMode()).toBe('warn');
+  });
 });

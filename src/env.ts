@@ -18,12 +18,14 @@ export type ReachabilityMode = 'warn' | 'strict' | 'off';
  *   warn   (default) — open anyway, surface a warning; the guest is the real test
  *   strict           — fail open() if the host can't reach the public URL
  *   off              — skip the probe entirely
- * Reads `TUNNEL_REACHABILITY`; falls back to the deprecated
- * `TUNNEL_SKIP_REACHABILITY_CHECK` (== off) shipped in 0.1.2; defaults to warn.
+ * Reads `TUNNEL_REACHABILITY`. Only when it is unset/blank does it fall back to
+ * the deprecated `TUNNEL_SKIP_REACHABILITY_CHECK` (== off) from 0.1.2 — an
+ * explicitly set (even mistyped) `TUNNEL_REACHABILITY` never defers to the alias.
+ * Any unrecognized value defaults to warn.
  */
 export function reachabilityMode(): ReachabilityMode {
   const raw = (process.env.TUNNEL_REACHABILITY ?? '').trim().toLowerCase();
   if (raw === 'warn' || raw === 'strict' || raw === 'off') return raw;
-  if (envFlag('TUNNEL_SKIP_REACHABILITY_CHECK')) return 'off';
+  if (raw === '' && envFlag('TUNNEL_SKIP_REACHABILITY_CHECK')) return 'off';
   return 'warn';
 }
