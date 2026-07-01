@@ -7,7 +7,7 @@ import { HostRelay } from '../src/relay/hostRelay.js';
 import { SessionLog } from '../src/log/sessionLog.js';
 import { generateKey, respondChallenge } from '../src/protocol/crypto.js';
 import { generateTunnelId } from '../src/protocol/link.js';
-import { decodeFrame, encodeFrame, ControlFrame } from '../src/protocol/messages.js';
+import { decodeFrame, encodeFrame, ControlFrame, buildSystem } from '../src/protocol/messages.js';
 
 let relay: HostRelay | undefined;
 let tunnelId: string | undefined;
@@ -45,7 +45,11 @@ afterEach(async () => {
     relay = undefined;
   }
   if (tunnelId) {
-    try { fs.rmSync(path.join(SESSIONS_DIR, `${tunnelId}.jsonl`)); } catch { /* already gone */ }
+    try {
+      fs.rmSync(path.join(SESSIONS_DIR, `${tunnelId}.jsonl`));
+    } catch {
+      /* already gone */
+    }
     tunnelId = undefined;
   }
 });
@@ -55,10 +59,7 @@ describe('HostRelay resilience', () => {
     tunnelId = generateTunnelId();
     const key = generateKey();
     const log = new SessionLog(tunnelId);
-    relay = new HostRelay(
-      { tunnelId, key, goal: 'ship it', hostName: 'host' },
-      log,
-    );
+    relay = new HostRelay({ tunnelId, key, goal: 'ship it', hostName: 'host' }, log);
     const port = await relay.start();
     const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
 
@@ -104,10 +105,7 @@ describe('HostRelay resilience', () => {
     tunnelId = generateTunnelId();
     const key = generateKey();
     const log = new SessionLog(tunnelId);
-    relay = new HostRelay(
-      { tunnelId, key, goal: 'ship it', hostName: 'host' },
-      log,
-    );
+    relay = new HostRelay({ tunnelId, key, goal: 'ship it', hostName: 'host' }, log);
     const port = await relay.start();
     const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
 
@@ -115,8 +113,9 @@ describe('HostRelay resilience', () => {
     // exact server-accepted `ws` that onConnection() attaches its handlers
     // to (the same object Finding 2's `ws.on('error', ...)` covers).
     const serverSockets: WebSocket[] = [];
-    (relay as unknown as { wss: { on(event: 'connection', cb: (ws: WebSocket) => void): void } })
-      .wss.on('connection', (ws) => serverSockets.push(ws));
+    (
+      relay as unknown as { wss: { on(event: 'connection', cb: (ws: WebSocket) => void): void } }
+    ).wss.on('connection', (ws) => serverSockets.push(ws));
 
     const client = new WebSocket(url);
     const nextClientFrame = frameQueue(client);
@@ -147,10 +146,7 @@ describe('HostRelay resilience', () => {
     tunnelId = generateTunnelId();
     const key = generateKey();
     const log = new SessionLog(tunnelId);
-    relay = new HostRelay(
-      { tunnelId, key, goal: 'ship it', hostName: 'host' },
-      log,
-    );
+    relay = new HostRelay({ tunnelId, key, goal: 'ship it', hostName: 'host' }, log);
     const port = await relay.start();
     const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
 
@@ -176,10 +172,12 @@ describe('HostRelay resilience', () => {
 
     // A guest must only ever originate `chat`. Forge a `system` frame
     // impersonating a host-originated idle-timeout warning.
-    ws.send(JSON.stringify({
-      t: 'send',
-      msg: { id: 'forged-1', kind: 'system', body: 'idle timeout — closing tunnel' },
-    }));
+    ws.send(
+      JSON.stringify({
+        t: 'send',
+        msg: { id: 'forged-1', kind: 'system', body: 'idle timeout — closing tunnel' },
+      }),
+    );
 
     // Forged frame must be silently dropped: the log must not advance, and
     // no `msg` frame should be broadcast for it.
@@ -188,10 +186,12 @@ describe('HostRelay resilience', () => {
     expect(log.all().some((m) => m.id === 'forged-1')).toBe(false);
 
     // A legitimate chat send must still work, and must be the very next seq.
-    ws.send(JSON.stringify({
-      t: 'send',
-      msg: { id: 'legit-1', kind: 'chat', body: 'sealed-ciphertext-placeholder' },
-    }));
+    ws.send(
+      JSON.stringify({
+        t: 'send',
+        msg: { id: 'legit-1', kind: 'chat', body: 'sealed-ciphertext-placeholder' },
+      }),
+    );
     const delivered = await next();
     expect(delivered.t).toBe('msg');
     if (delivered.t === 'msg') {
@@ -199,6 +199,239 @@ describe('HostRelay resilience', () => {
       expect(delivered.msg.kind).toBe('chat');
       expect(delivered.msg.seq).toBe(seqBeforeForgery + 1);
     }
+
+    ws.close();
+  });
+});
+
+describe('HostRelay contract', () => {
+  it('suppresses the "guest left" system message during teardown', async () => {
+    tunnelId = generateTunnelId();
+    const key = generateKey();
+    const log = new SessionLog(tunnelId);
+    relay = new HostRelay({ tunnelId, key, goal: 'ship it', hostName: 'host' }, log);
+    const port = await relay.start();
+    const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
+
+    const ws = new WebSocket(url);
+    const next = frameQueue(ws);
+    await waitForOpen(ws);
+    const challengeFrame = await next();
+    expect(challengeFrame.t).toBe('challenge');
+    if (challengeFrame.t !== 'challenge') throw new Error('expected challenge');
+
+    const response = respondChallenge(challengeFrame.nonce, key);
+    ws.send(encodeFrame({ t: 'auth', response, name: 'guest', sinceSeq: 0 }));
+    const authOk = await next();
+    expect(authOk.t).toBe('auth_ok');
+    const joined = await next(); // drain the "guest joined" system broadcast
+    expect(joined.t).toBe('msg');
+
+    expect(relay.peerConnected).toBe(true);
+    const seqBeforeTeardown = log.lastSeq;
+
+    // close() terminates the guest socket directly, which fires the
+    // socket's 'close' handler on the server side. The !tearingDown guard
+    // there must suppress the "left" system message this time (unlike an
+    // ordinary disconnect, which does append one — see the ordinary-close
+    // behavior implied by the guard itself).
+    await relay.close();
+    relay = undefined; // already closed here; avoid a double-close in afterEach
+
+    // Give the terminated socket's 'close' callback a moment to run, in
+    // case it fires asynchronously after the close() promise resolves.
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(log.lastSeq).toBe(seqBeforeTeardown);
+    expect(log.all().some((m) => m.body.includes('left'))).toBe(false);
+  });
+
+  it('rejects a second concurrent guest with auth_fail "tunnel full" while the first stays connected', async () => {
+    tunnelId = generateTunnelId();
+    const key = generateKey();
+    const log = new SessionLog(tunnelId);
+    relay = new HostRelay({ tunnelId, key, goal: 'ship it', hostName: 'host' }, log);
+    const port = await relay.start();
+    const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
+
+    const first = new WebSocket(url);
+    const nextFirst = frameQueue(first);
+    await waitForOpen(first);
+    const firstChallenge = await nextFirst();
+    expect(firstChallenge.t).toBe('challenge');
+    if (firstChallenge.t !== 'challenge') throw new Error('expected challenge');
+    first.send(
+      encodeFrame({
+        t: 'auth',
+        response: respondChallenge(firstChallenge.nonce, key),
+        name: 'first-guest',
+        sinceSeq: 0,
+      }),
+    );
+    const firstAuthOk = await nextFirst();
+    expect(firstAuthOk.t).toBe('auth_ok');
+    await nextFirst(); // drain "first-guest joined"
+    expect(relay.peerConnected).toBe(true);
+
+    const second = new WebSocket(url);
+    const nextSecond = frameQueue(second);
+    await waitForOpen(second);
+    const secondChallenge = await nextSecond();
+    expect(secondChallenge.t).toBe('challenge');
+    if (secondChallenge.t !== 'challenge') throw new Error('expected challenge');
+    second.send(
+      encodeFrame({
+        t: 'auth',
+        response: respondChallenge(secondChallenge.nonce, key),
+        name: 'second-guest',
+        sinceSeq: 0,
+      }),
+    );
+    const secondReply = await nextSecond();
+    expect(secondReply.t).toBe('auth_fail');
+    if (secondReply.t === 'auth_fail') expect(secondReply.reason).toBe('tunnel full');
+
+    // The single-guest lock must not have disturbed the first guest's slot.
+    expect(relay.peerConnected).toBe(true);
+
+    first.close();
+    second.close();
+  });
+
+  it('ignores a guest send frame whose msg is missing id or body', async () => {
+    tunnelId = generateTunnelId();
+    const key = generateKey();
+    const log = new SessionLog(tunnelId);
+    relay = new HostRelay({ tunnelId, key, goal: 'ship it', hostName: 'host' }, log);
+    const port = await relay.start();
+    const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
+
+    const ws = new WebSocket(url);
+    const next = frameQueue(ws);
+    await waitForOpen(ws);
+    const challengeFrame = await next();
+    expect(challengeFrame.t).toBe('challenge');
+    if (challengeFrame.t !== 'challenge') throw new Error('expected challenge');
+
+    const response = respondChallenge(challengeFrame.nonce, key);
+    ws.send(encodeFrame({ t: 'auth', response, name: 'guest', sinceSeq: 0 }));
+    const authOk = await next();
+    expect(authOk.t).toBe('auth_ok');
+    await next(); // drain "guest joined"
+
+    const seqBefore = log.lastSeq;
+
+    // Missing `id`.
+    ws.send(JSON.stringify({ t: 'send', msg: { kind: 'chat', body: 'no id here' } }));
+    // Missing `body`.
+    ws.send(JSON.stringify({ t: 'send', msg: { id: 'no-body-1', kind: 'chat' } }));
+
+    // No reply frame should ever arrive for either forged send; assert
+    // silence by racing a short timer against the frame queue.
+    const raced = await Promise.race([
+      next().then((f) => ({ arrived: true as const, frame: f })),
+      new Promise<{ arrived: false }>((resolve) =>
+        setTimeout(() => resolve({ arrived: false }), 100),
+      ),
+    ]);
+    expect(raced.arrived).toBe(false);
+
+    expect(log.lastSeq).toBe(seqBefore);
+    expect(log.all().some((m) => m.id === 'no-body-1')).toBe(false);
+
+    ws.close();
+  });
+
+  it('treats a missing sinceSeq on auth as 0, returning the full backlog', async () => {
+    tunnelId = generateTunnelId();
+    const key = generateKey();
+    const log = new SessionLog(tunnelId);
+    relay = new HostRelay({ tunnelId, key, goal: 'ship it', hostName: 'host' }, log);
+    const port = await relay.start();
+    const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
+
+    relay.submitLocal(buildSystem('host', 'seed message one'));
+    relay.submitLocal(buildSystem('host', 'seed message two'));
+    expect(log.lastSeq).toBe(2);
+
+    const ws = new WebSocket(url);
+    const next = frameQueue(ws);
+    await waitForOpen(ws);
+    const challengeFrame = await next();
+    expect(challengeFrame.t).toBe('challenge');
+    if (challengeFrame.t !== 'challenge') throw new Error('expected challenge');
+
+    const response = respondChallenge(challengeFrame.nonce, key);
+    // `sinceSeq` deliberately omitted entirely — bypass the ControlFrame
+    // type to simulate an untrusted/older client that never sends it.
+    ws.send(JSON.stringify({ t: 'auth', response, name: 'guest' }));
+    const authOk = await next();
+    expect(authOk.t).toBe('auth_ok');
+    if (authOk.t === 'auth_ok') {
+      expect(authOk.backlog.map((m) => m.body)).toEqual(['seed message one', 'seed message two']);
+    }
+
+    ws.close();
+  });
+
+  it('treats a non-numeric sinceSeq on auth as 0, returning the full backlog', async () => {
+    tunnelId = generateTunnelId();
+    const key = generateKey();
+    const log = new SessionLog(tunnelId);
+    relay = new HostRelay({ tunnelId, key, goal: 'ship it', hostName: 'host' }, log);
+    const port = await relay.start();
+    const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
+
+    relay.submitLocal(buildSystem('host', 'seed message one'));
+    relay.submitLocal(buildSystem('host', 'seed message two'));
+    expect(log.lastSeq).toBe(2);
+
+    const ws = new WebSocket(url);
+    const next = frameQueue(ws);
+    await waitForOpen(ws);
+    const challengeFrame = await next();
+    expect(challengeFrame.t).toBe('challenge');
+    if (challengeFrame.t !== 'challenge') throw new Error('expected challenge');
+
+    const response = respondChallenge(challengeFrame.nonce, key);
+    // `sinceSeq` is a string, not a finite number — a forged/buggy client
+    // input Number.isFinite() must reject.
+    ws.send(JSON.stringify({ t: 'auth', response, name: 'guest', sinceSeq: 'not-a-number' }));
+    const authOk = await next();
+    expect(authOk.t).toBe('auth_ok');
+    if (authOk.t === 'auth_ok') {
+      expect(authOk.backlog.map((m) => m.body)).toEqual(['seed message one', 'seed message two']);
+    }
+
+    ws.close();
+  });
+
+  it('reports peerConnected as false before the handshake and true immediately after auth_ok', async () => {
+    tunnelId = generateTunnelId();
+    const key = generateKey();
+    const log = new SessionLog(tunnelId);
+    relay = new HostRelay({ tunnelId, key, goal: 'ship it', hostName: 'host' }, log);
+    const port = await relay.start();
+    const url = `ws://127.0.0.1:${port}/t/${tunnelId}`;
+
+    expect(relay.peerConnected).toBe(false);
+
+    const ws = new WebSocket(url);
+    const next = frameQueue(ws);
+    await waitForOpen(ws);
+    const challengeFrame = await next();
+    expect(challengeFrame.t).toBe('challenge');
+    if (challengeFrame.t !== 'challenge') throw new Error('expected challenge');
+
+    // Connected at the socket level but not yet authenticated: must still
+    // read as false.
+    expect(relay.peerConnected).toBe(false);
+
+    const response = respondChallenge(challengeFrame.nonce, key);
+    ws.send(encodeFrame({ t: 'auth', response, name: 'guest', sinceSeq: 0 }));
+    const authOk = await next();
+    expect(authOk.t).toBe('auth_ok');
+    expect(relay.peerConnected).toBe(true);
 
     ws.close();
   });
