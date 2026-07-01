@@ -163,6 +163,4 @@ This is an MVP. The following are explicitly out of scope for now:
 
 ## License
 
-MIT — see [LICENSE](./LICENSE). Copyright (c) 2026 Zachary Kehl.
-
-Maintainer contact: zach@likefolio.com
+MIT — see [LICENSE](./LICENSE).
