@@ -53,8 +53,7 @@
   },
   "homepage": "https://github.com/zachlikefolio/tunnel-mcp#readme",
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

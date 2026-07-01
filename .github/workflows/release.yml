@@ -1,14 +1,17 @@
-# Release workflow — publishes tunnel-mcp to npm (with provenance) and cuts a
-# GitHub Release with auto-generated notes.
+# Release workflow — publishes tunnel-mcp to npm and cuts a GitHub Release.
 #
-# Trigger: only runs on pushes of version tags matching 'v*' (e.g. v0.1.0).
+# Trigger: pushes of version tags matching 'v*' (e.g. v0.1.0).
 #
-# Required repository secret:
-#   NPM_TOKEN — an npm automation/publish token with rights to publish the
-#               "tunnel-mcp" package to https://registry.npmjs.org.
-#
-# No other secrets are required; GITHUB_TOKEN (provided automatically by
-# Actions) is used to create the GitHub Release.
+# Authentication: npm Trusted Publishing (OIDC) — NO npm token or secret needed.
+# One-time setup on npmjs.com: on the tunnel-mcp package page, open
+# Settings -> "Trusted Publisher" and add a GitHub Actions publisher with:
+#   - Organization or user: zachlikefolio
+#   - Repository:           tunnel-mcp
+#   - Workflow filename:    release.yml
+#   - Allowed action:       npm publish
+# npm automatically attaches a provenance attestation for trusted-publisher
+# publishes (no --provenance flag required). GITHUB_TOKEN (provided
+# automatically by Actions) is used only to create the GitHub Release.
 
 name: Release
 
@@ -21,17 +24,21 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      id-token: write
+      contents: write # create the GitHub Release
+      id-token: write # OIDC token for npm trusted publishing
     steps:
       - uses: actions/checkout@v7
 
-      - name: Use Node.js 20
+      - name: Use Node.js 24
         uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
+
+      # Trusted publishing requires npm CLI >= 11.5.1 (and Node >= 22.14).
+      - name: Ensure OIDC-capable npm
+        run: npm install -g npm@latest
 
       - name: Install dependencies
         run: npm ci
@@ -42,10 +49,8 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Publish to npm
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish to npm (Trusted Publishing / OIDC)
+        run: npm publish --access public
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
