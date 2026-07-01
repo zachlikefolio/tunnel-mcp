@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Nothing yet.
+
+## [0.1.1] - 2026-07-01
+
 ### Security
 
 - **Join links are now single-use and expiring.** A join link is consumed by
