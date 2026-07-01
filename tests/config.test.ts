@@ -8,9 +8,17 @@ import {
   DEFAULT_IDLE_TEARDOWN_MS,
   DEFAULT_JOIN_LINK_TTL_MS,
   CLOUDFLARED_URL_TIMEOUT_MS,
-  CLOUDFLARED_HEALTH_ATTEMPTS,
-  CLOUDFLARED_HEALTH_INTERVAL_MS,
   OPEN_RETRY_ATTEMPTS,
+  READINESS_GATE_BUDGET_MS,
+  READINESS_INITIAL_DELAY_MS,
+  READINESS_POLL_INTERVAL_MS,
+  DOH_REQUEST_TIMEOUT_MS,
+  DOH_PROVIDERS,
+  GUEST_HANDSHAKE_TIMEOUT_MS,
+  GUEST_CONNECT_DEADLINE_MS,
+  GUEST_SYS_LOOKUP_TIMEOUT_MS,
+  DOH_GUEST_RETRIES,
+  DOH_GUEST_RETRY_DELAY_MS,
 } from '../src/config.js';
 
 describe('config', () => {
@@ -29,9 +37,33 @@ describe('config', () => {
     expect(DEFAULT_IDLE_TEARDOWN_MS).toBe(1800000);
     expect(DEFAULT_JOIN_LINK_TTL_MS).toBe(600000);
     expect(CLOUDFLARED_URL_TIMEOUT_MS).toBe(30000);
-    expect(CLOUDFLARED_HEALTH_ATTEMPTS).toBe(10);
-    expect(CLOUDFLARED_HEALTH_INTERVAL_MS).toBe(1000);
     expect(OPEN_RETRY_ATTEMPTS).toBe(3);
+
+    expect(READINESS_GATE_BUDGET_MS).toBe(60000);
+    expect(READINESS_INITIAL_DELAY_MS).toBe(5000);
+    expect(READINESS_POLL_INTERVAL_MS).toBe(1000);
+    expect(DOH_REQUEST_TIMEOUT_MS).toBe(3000);
+    expect(GUEST_HANDSHAKE_TIMEOUT_MS).toBe(15000);
+    expect(GUEST_CONNECT_DEADLINE_MS).toBe(20000);
+    expect(GUEST_SYS_LOOKUP_TIMEOUT_MS).toBe(2000);
+    expect(DOH_GUEST_RETRIES).toBe(3);
+    expect(DOH_GUEST_RETRY_DELAY_MS).toBe(700);
+    // The overall connect deadline must exceed the handshake bound so the
+    // handshake timeout fires first on a connect-phase black hole.
+    expect(GUEST_CONNECT_DEADLINE_MS).toBeGreaterThan(GUEST_HANDSHAKE_TIMEOUT_MS);
+  });
+
+  it('ships IP-literal DoH providers (never a hostname, which would re-poison the system resolver)', () => {
+    expect(DOH_PROVIDERS.length).toBeGreaterThanOrEqual(2);
+    for (const p of DOH_PROVIDERS) {
+      const u = new URL(p.url('example.trycloudflare.com', 'A'));
+      // host must be an IP literal
+      expect(u.hostname).toMatch(/^(\d{1,3}\.){3}\d{1,3}$|^\[?[0-9a-fA-F:]+\]?$/);
+      expect(u.searchParams.get('name')).toBe('example.trycloudflare.com');
+    }
+    // Cloudflare uses /dns-query, Google uses /resolve.
+    expect(DOH_PROVIDERS.some((p) => p.url('h', 'A').includes('1.1.1.1/dns-query'))).toBe(true);
+    expect(DOH_PROVIDERS.some((p) => p.url('h', 'A').includes('8.8.8.8/resolve'))).toBe(true);
   });
 
   it('derives BIN_DIR and SESSIONS_DIR as direct children of TUNNEL_HOME', () => {
@@ -45,9 +77,16 @@ describe('config', () => {
       DEFAULT_IDLE_TEARDOWN_MS,
       DEFAULT_JOIN_LINK_TTL_MS,
       CLOUDFLARED_URL_TIMEOUT_MS,
-      CLOUDFLARED_HEALTH_ATTEMPTS,
-      CLOUDFLARED_HEALTH_INTERVAL_MS,
       OPEN_RETRY_ATTEMPTS,
+      READINESS_GATE_BUDGET_MS,
+      READINESS_INITIAL_DELAY_MS,
+      READINESS_POLL_INTERVAL_MS,
+      DOH_REQUEST_TIMEOUT_MS,
+      GUEST_HANDSHAKE_TIMEOUT_MS,
+      GUEST_CONNECT_DEADLINE_MS,
+      GUEST_SYS_LOOKUP_TIMEOUT_MS,
+      DOH_GUEST_RETRIES,
+      DOH_GUEST_RETRY_DELAY_MS,
     ];
     for (const value of numericConstants) {
       expect(typeof value).toBe('number');

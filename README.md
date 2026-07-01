@@ -162,7 +162,7 @@ vulnerability.
 
 ```bash
 npm ci                  # install dependencies
-npm test                # run the test suite (136 tests, TDD)
+npm test                # run the test suite (159 tests, TDD)
 npm run build           # compile TypeScript
 npm run lint            # eslint
 npm run format:check    # prettier --check .
@@ -178,21 +178,18 @@ an interactive CLI — with no arguments it starts and waits for an MCP client t
 connect over stdin/stdout. That's working as intended. Register it with a client
 (above), or run `tunnel-mcp --help`.
 
-**`tunnel_open` warns that this machine can't reach `*.trycloudflare.com`.**
-cloudflared reaches Cloudflare's edge over its own protocol, but the public
-`*.trycloudflare.com` hostname still has to resolve via normal DNS — and some
-networks (corporate/filtered networks, some public DNS resolvers, or a proxy that
-Node's `fetch` ignores) can't reach it from the host. Because only your
-**guest's** network truly has to reach the link, `tunnel_open` **opens anyway and
-returns a `reachabilityWarning` by default** — share the link and have your guest
-confirm they can open it. Control this with `TUNNEL_REACHABILITY`:
-
-- `warn` (default) — open, but warn when the host can't reach the URL
-- `strict` — fail `tunnel_open` unless the host can reach the URL first
-- `off` — skip the host-side reachability probe entirely
-
-Diagnose the host's DNS with `dig +short <random>.trycloudflare.com` or
-`curl -sI https://<the-url>`.
+**Guest join fails with `getaddrinfo ENOTFOUND …trycloudflare.com`.** A
+cloudflared quick tunnel prints its URL a few seconds _before_ the per-tunnel DNS
+record has propagated. If anything looks the name up too early it gets an
+`NXDOMAIN` that the resolver negative-caches for up to 30 minutes — breaking the
+join even after the tunnel is live. `tunnel-mcp` avoids this: `tunnel_open` waits
+for the record to actually resolve (via DoH to Cloudflare's `1.1.1.1`, an IP that
+never touches — and so never poisons — your system resolver) before returning the
+link, and the guest resolves system-first with a DoH fallback. So a fresh join
+should just work; if you hit `ENOTFOUND`, an _earlier_ attempt likely poisoned the
+cache — wait for it to expire, or flush DNS (`sudo dscacheutil -flushcache` on
+macOS). Set `TUNNEL_DOH=off` only on networks that block DoH (`1.1.1.1`) and where
+system DNS already resolves `*.trycloudflare.com`.
 
 ## Roadmap / not yet supported
 

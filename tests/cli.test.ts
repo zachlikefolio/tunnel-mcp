@@ -61,7 +61,7 @@ describe('helpText', () => {
     expect(t).toContain('claude mcp add');
     expect(t).toContain('install-skill');
     expect(t).toContain('--version');
-    expect(t).toContain('TUNNEL_REACHABILITY');
+    expect(t).toContain('TUNNEL_DOH');
     expect(t).toContain('TUNNEL_SKIP_SKILL_INSTALL');
   });
 });

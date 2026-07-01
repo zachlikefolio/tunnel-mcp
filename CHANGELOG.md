@@ -11,6 +11,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet.
 
+## [0.1.4] - 2026-07-01
+
+### Fixed
+
+- **Guests no longer fail to join with `getaddrinfo ENOTFOUND …trycloudflare.com`.**
+  Root cause: a cloudflared quick tunnel prints its URL ~8–25s before the
+  per-tunnel DNS record propagates, and the old host-side reachability probe
+  looked the name up immediately — seeding an `NXDOMAIN` that the resolver
+  negative-cached for up to 30 minutes (the zone's SOA minimum), breaking the
+  guest's join even after the tunnel went live. The probe was the cause, not a
+  diagnostic.
+
+### Changed
+
+- **`tunnel_open` now gates the join link on real DNS readiness via DoH.** After
+  cloudflared reports the URL, the host polls liveness over IP-literal DoH
+  endpoints (`1.1.1.1`/`1.0.0.1`/`8.8.8.8`) — which never touch, and so never
+  poison, the system resolver — and only returns the link once the record
+  resolves (best-effort: it never blocks or hard-fails; after a budget it returns
+  the link anyway).
+- **The guest resolves system-first with a DoH fallback**, connecting by the
+  resolved IP while keeping SNI/Host = the hostname, so a guest whose resolver
+  lags or holds a stale negative cache still connects.
+- **Guest connection is now time-bounded** (handshake + overall connect deadline),
+  so a black-hole link fails fast with a clear error instead of hanging.
+- The `0.1.3` `TUNNEL_REACHABILITY` (and `0.1.2` `TUNNEL_SKIP_REACHABILITY_CHECK`)
+  environment variables are **no longer read** — they only ever relaxed the
+  now-deleted probe. New single knob: `TUNNEL_DOH=off` disables DoH for networks
+  that block it and where system DNS already works.
+
 ## [0.1.3] - 2026-07-01
 
 ### Changed
@@ -94,7 +124,8 @@ install-skill` copies the `tunnel-etiquette` skill into `~/.claude/skills`
   declaring a fix "confirmed".
 - Test suite of 109 tests built with vitest, developed test-first (TDD).
 
-[Unreleased]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.0...v0.1.1

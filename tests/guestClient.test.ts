@@ -101,6 +101,90 @@ describe('GuestClient', () => {
     expect(backlog.every((m) => m.seq > m1.seq)).toBe(true);
   });
 
+  it('rejects within the handshake bound instead of hanging when the URL is a TCP black hole', async () => {
+    const net = await import('node:net');
+    const server = net.createServer(() => {
+      /* accept the TCP connection, never speak HTTP */
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    const port = (server.address() as { port: number }).port;
+    cleanups.push(() => server.close());
+
+    const link = parseLink(mintLink(`http://127.0.0.1:${port}`, generateTunnelId(), generateKey()));
+    const guestLog = new SessionLog(generateTunnelId());
+    const guest = new GuestClient(link, 'bob', guestLog, {
+      handshakeTimeoutMs: 150,
+      connectDeadlineMs: 5000,
+    });
+    cleanups.push(() => {
+      guest.close();
+      guestLog.delete();
+    });
+
+    const start = Date.now();
+    await expect(guest.connect(0)).rejects.toThrow();
+    expect(Date.now() - start).toBeLessThan(3000);
+  });
+
+  it('rejects on the overall connect deadline when the server upgrades but never sends a challenge', async () => {
+    const { WebSocketServer } = await import('ws');
+    const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await new Promise<void>((r) => wss.once('listening', () => r()));
+    const port = (wss.address() as { port: number }).port;
+    wss.on('connection', () => {
+      /* accept the WS, never send a challenge */
+    });
+    cleanups.push(() => wss.close());
+
+    const link = parseLink(mintLink(`http://127.0.0.1:${port}`, generateTunnelId(), generateKey()));
+    const guestLog = new SessionLog(generateTunnelId());
+    const guest = new GuestClient(link, 'bob', guestLog, {
+      handshakeTimeoutMs: 2000,
+      connectDeadlineMs: 200,
+    });
+    cleanups.push(() => {
+      guest.close();
+      guestLog.delete();
+    });
+
+    await expect(guest.connect(0)).rejects.toThrow(/timed out establishing tunnel/);
+  });
+
+  it('a custom lookup returning an IP still sends Host = hostname (Cloudflare routing intact)', async () => {
+    const { WebSocketServer } = await import('ws');
+    const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await new Promise<void>((r) => wss.once('listening', () => r()));
+    const port = (wss.address() as { port: number }).port;
+    const gotHost = new Promise<string>((resolve) => {
+      wss.on('connection', (_ws, req) => resolve(req.headers.host ?? ''));
+    });
+    cleanups.push(() => wss.close());
+
+    // wsUrl host is a fake trycloudflare name; the injected lookup maps it to loopback.
+    const link = parseLink(
+      mintLink(`http://fake-tunnel.trycloudflare.com:${port}`, generateTunnelId(), generateKey()),
+    );
+    const guestLog = new SessionLog(generateTunnelId());
+    const guest = new GuestClient(link, 'bob', guestLog, {
+      // Honor the all:true contract ws uses on Node >=20 (array shape).
+      lookup: (
+        _h: string,
+        o: { all?: boolean } | undefined,
+        cb: (e: null, a: unknown, f?: number) => void,
+      ) =>
+        o && o.all ? cb(null, [{ address: '127.0.0.1', family: 4 }]) : cb(null, '127.0.0.1', 4),
+      connectDeadlineMs: 2000,
+      handshakeTimeoutMs: 2000,
+    });
+    cleanups.push(() => {
+      guest.close();
+      guestLog.delete();
+    });
+    guest.connect(0).catch(() => {}); // never auths (no challenge) — we only need the Host header
+
+    expect(await gotHost).toBe(`fake-tunnel.trycloudflare.com:${port}`);
+  });
+
   it('emits a "message" event for a host-sent chat', async () => {
     const { key, relay, guest } = await setup();
     await guest.connect(0);

@@ -134,27 +134,6 @@ describe('TunnelSession (host <-> guest, fake cloudflared)', () => {
     expect(opened.joinLinkExpiresInSec).toBe(600);
   });
 
-  it('open() surfaces a reachabilityWarning from the tunnel handle (warn mode)', async () => {
-    const host = new TunnelSession({
-      ensureCloudflared: async () => 'fake',
-      startCloudflared: async (_b: string, port: number) => ({
-        publicUrl: `http://127.0.0.1:${port}`,
-        stop() {},
-        reachabilityWarning: 'Tunnel opened, but this machine could not reach the URL.',
-      }),
-    });
-    sessions.push(host);
-    const opened = await host.open('goal', 'alice');
-    expect(opened.reachabilityWarning).toContain('could not reach');
-  });
-
-  it('open() omits reachabilityWarning when the handle has none', async () => {
-    const host = new TunnelSession(fakeDeps({}));
-    sessions.push(host);
-    const opened = await host.open('goal', 'alice');
-    expect(opened.reachabilityWarning).toBeUndefined();
-  });
-
   it('an expired join link is rejected end-to-end', async () => {
     const host = new TunnelSession({
       ensureCloudflared: async () => 'fake',
