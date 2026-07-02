@@ -198,7 +198,7 @@ vulnerability.
 
 ```bash
 npm ci                  # install dependencies
-npm test                # run the test suite (201 tests, TDD)
+npm test                # run the test suite (198 tests, TDD)
 npm run build           # compile TypeScript
 npm run lint            # eslint
 npm run format:check    # prettier --check .
