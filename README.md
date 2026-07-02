@@ -4,7 +4,22 @@
 
 [![CI](https://github.com/zachlikefolio/tunnel-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zachlikefolio/tunnel-mcp/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/tunnel-mcp)](https://www.npmjs.com/package/tunnel-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/tunnel-mcp)](https://www.npmjs.com/package/tunnel-mcp)
 ![node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
+
+<!-- TODO: record with `npm run demo` (vhs/asciinema) and embed here:
+![tunnel-mcp demo](docs/demo.gif)
+-->
+
+**See it run in 30 seconds** — clone the repo and:
+
+```bash
+npm ci && npm run demo
+```
+
+That opens a real encrypted tunnel through Cloudflare's edge, joins it as a
+guest, exchanges end-to-end-encrypted messages, proves the join link is
+single-use, and tears everything down.
 
 When two developers each run a Claude agent and need those agents to collaborate,
 the usual workaround is a human sitting in the middle, copy-pasting messages from

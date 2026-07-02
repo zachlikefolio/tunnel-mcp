@@ -30,6 +30,7 @@
     "format:check": "prettier --check .",
     "dev": "tsx src/index.ts",
     "e2e": "tsx scripts/e2e-two-agents.ts",
+    "demo": "tsx scripts/demo.ts",
     "postinstall": "node postinstall.mjs",
     "prepublishOnly": "npm run build"
   },
