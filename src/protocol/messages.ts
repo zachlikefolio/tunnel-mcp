@@ -3,9 +3,6 @@ import { Key, seal, open } from './crypto.js';
 
 export type MessageKind = 'chat' | 'system' | 'presence';
 
-/** @deprecated v1 protocol role — removed in Task 4's flip; use ParticipantId. */
-export type Role = 'host' | 'guest';
-
 export type ParticipantId = string; // 8 random bytes, hex (16 chars)
 
 export interface RosterEntry {
@@ -69,11 +66,25 @@ export function decrypt(msg: WireMessage, key: Key): PlainMessage {
 
 export type ControlFrame =
   | { t: 'challenge'; nonce: string }
-  | { t: 'auth'; response: string; name: string; sinceSeq: number }
-  | { t: 'auth_ok'; goal: string; peerName: string; backlog: WireMessage[] }
+  | {
+      t: 'auth';
+      response: string;
+      name: string;
+      sinceSeq: number;
+      token: string;
+      protocolVersion: number;
+    }
+  | {
+      t: 'auth_ok';
+      goal: string;
+      selfId: ParticipantId;
+      roster: RosterEntry[];
+      backlog: WireMessage[];
+    }
   | { t: 'auth_fail'; reason: string }
   | { t: 'msg'; msg: WireMessage }
-  | { t: 'send'; msg: WireMessage };
+  | { t: 'send'; msg: WireMessage }
+  | { t: 'roster'; members: RosterEntry[] };
 
 export function encodeFrame(frame: ControlFrame): string {
   return JSON.stringify(frame);

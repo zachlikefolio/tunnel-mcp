@@ -9,6 +9,7 @@ import {
   newId,
   ControlFrame,
   WireMessage,
+  RosterEntry,
   newParticipantId,
 } from '../src/protocol/messages.js';
 
@@ -115,12 +116,19 @@ describe('messages', () => {
         response: 'resp-abc',
         name: 'agent-1',
         sinceSeq: 42,
+        token: 'tok-123',
+        protocolVersion: 2,
       };
       expect(decodeFrame(encodeFrame(frame))).toEqual(frame);
     });
 
-    it('auth_ok with a backlog array of wire messages', () => {
+    it('auth_ok with a roster and a backlog array of wire messages', () => {
       const key = generateKey();
+      const selfId = newParticipantId();
+      const roster: RosterEntry[] = [
+        { id: newParticipantId(), name: 'host-agent', isHost: true, connected: true },
+        { id: selfId, name: 'me', isHost: false, connected: true },
+      ];
       const backlog: WireMessage[] = [
         buildChat('host', 'hello', key),
         buildSystem('guest', 'joined'),
@@ -129,22 +137,35 @@ describe('messages', () => {
       const frame: ControlFrame = {
         t: 'auth_ok',
         goal: 'ship the feature',
-        peerName: 'host-agent',
+        selfId,
+        roster,
         backlog,
       };
       const decoded = decodeFrame(encodeFrame(frame));
       expect(decoded).toEqual(frame);
       if (decoded.t === 'auth_ok') {
+        expect(decoded.roster).toHaveLength(2);
         expect(decoded.backlog).toHaveLength(3);
         expect(decoded.backlog[0].body).toBe(backlog[0].body);
       }
     });
 
-    it('auth_ok with an empty backlog array', () => {
-      const frame: ControlFrame = { t: 'auth_ok', goal: 'g', peerName: 'p', backlog: [] };
+    it('auth_ok with an empty roster and backlog array', () => {
+      const frame: ControlFrame = { t: 'auth_ok', goal: 'g', selfId: 'p', roster: [], backlog: [] };
       const decoded = decodeFrame(encodeFrame(frame));
       expect(decoded).toEqual(frame);
       if (decoded.t === 'auth_ok') expect(decoded.backlog).toEqual([]);
+    });
+
+    it('roster', () => {
+      const roster: RosterEntry[] = [
+        { id: newParticipantId(), name: 'alice', isHost: true, connected: true },
+        { id: newParticipantId(), name: 'bob', isHost: false, connected: false },
+      ];
+      const frame: ControlFrame = { t: 'roster', members: roster };
+      const decoded = decodeFrame(encodeFrame(frame));
+      expect(decoded).toEqual(frame);
+      if (decoded.t === 'roster') expect(decoded.members).toHaveLength(2);
     });
 
     it('auth_fail', () => {

@@ -53,7 +53,7 @@ async function withSpinner<T>(label: string, p: Promise<T>): Promise<T> {
 
 async function waitForPeerChat(
   session: TunnelSession,
-  myRole: 'host' | 'guest',
+  myName: string,
   deadlineMs: number,
 ): Promise<string> {
   const stop = Date.now() + deadlineMs;
@@ -61,7 +61,7 @@ async function waitForPeerChat(
   while (Date.now() < stop) {
     const { messages } = await session.listen(since, Math.max(200, stop - Date.now()));
     for (const m of messages) since = Math.max(since, m.seq);
-    const peer = messages.find((m) => m.kind === 'chat' && m.from !== myRole);
+    const peer = messages.find((m) => m.kind === 'chat' && m.fromName !== myName);
     if (peer) return peer.text;
   }
   return '(timed out)';
@@ -78,7 +78,7 @@ const opened = await withSpinner(
   'spawning cloudflared + waiting for the DNS record to go live (DoH readiness gate)',
   alice.open('debug the flaky checkout test', 'Alice'),
 );
-line('', C.sys, `${C.sys}tunnel up → ${C.reset}${opened.joinLink.replace(/#.*$/, '#…key…')}`);
+line('', C.sys, `${C.sys}tunnel up → ${C.reset}${opened.joinLink!.replace(/#.*$/, '#…key…')}`);
 line(
   '',
   C.sys,
@@ -92,8 +92,9 @@ line(
   `tunnel_join({ joinLink: "wss://…" })   ${C.sys}(from a different machine)${C.reset}`,
 );
 const bob = new TunnelSession();
-const joined = await withSpinner('dialing the public tunnel', bob.join(opened.joinLink, 'Bob'));
-line('', C.ok, `joined — goal: "${joined.goal}", peer: ${joined.peer}`);
+const joined = await withSpinner('dialing the public tunnel', bob.join(opened.joinLink!, 'Bob'));
+const hostName = joined.members.find((m) => m.isHost)?.name;
+line('', C.ok, `joined — goal: "${joined.goal}", peer: ${hostName}`);
 await sleep(900);
 
 await typeOut(
@@ -102,7 +103,7 @@ await typeOut(
   `→ "The test fails on a 401 from /checkout. Can you hit it from your side?"`,
 );
 await alice.say('The test fails on a 401 from /checkout. Can you hit it from your side?');
-const bobGot = await waitForPeerChat(bob, 'guest', 15000);
+const bobGot = await waitForPeerChat(bob, 'Bob', 15000);
 line("BOB'S AGENT", C.bob, `${C.dim}decrypted:${C.reset} "${bobGot}"`);
 await sleep(700);
 
@@ -112,14 +113,14 @@ await typeOut(
   `→ "Repro'd. Your client sends X-Api-Version: 2 — staging only accepts 3."`,
 );
 await bob.say("Repro'd. Your client sends X-Api-Version: 2 — staging only accepts 3.");
-const aliceGot = await waitForPeerChat(alice, 'host', 15000);
+const aliceGot = await waitForPeerChat(alice, 'Alice', 15000);
 line("ALICE'S AGENT", C.alice, `${C.dim}decrypted:${C.reset} "${aliceGot}"`);
 await sleep(1000);
 
 line('MALLORY', C.mallory, `tries the leaked link…`);
 const mallory = new TunnelSession();
 try {
-  await mallory.join(opened.joinLink, 'Mallory');
+  await mallory.join(opened.joinLink!, 'Mallory');
   line('MALLORY', C.mallory, 'joined?! (this should never print)');
 } catch (e) {
   line('', C.ok, `rejected — ${String((e as Error).message)} ${C.sys}(single-use link)${C.reset}`);

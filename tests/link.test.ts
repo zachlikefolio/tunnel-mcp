@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { generateKey, keyToBase64url, generateToken } from '../src/protocol/crypto.js';
-import { generateTunnelId, mintLink, parseLink, mintInvite } from '../src/protocol/link.js';
+import { generateTunnelId, parseLink, mintInvite } from '../src/protocol/link.js';
 
 describe('link', () => {
   it('mints an https base into a wss link and parses it back', () => {
     const key = generateKey();
     const id = generateTunnelId();
-    const link = mintLink('https://abc-def.trycloudflare.com', id, key);
+    const link = mintInvite('https://abc-def.trycloudflare.com', id, key, generateToken());
     expect(link).toMatch(/^wss:\/\/abc-def\.trycloudflare\.com\/t\/[0-9a-f]+#.+$/);
 
     const parsed = parseLink(link);
@@ -29,7 +29,7 @@ describe('link', () => {
   it('converts an http:// base to ws:// (not just https->wss)', () => {
     const key = generateKey();
     const id = generateTunnelId();
-    const link = mintLink('http://localhost:8080', id, key);
+    const link = mintInvite('http://localhost:8080', id, key, generateToken());
     expect(link).toMatch(/^ws:\/\/localhost:8080\/t\/[0-9a-f]+#.+$/);
     expect(link.startsWith('wss://')).toBe(false);
 
@@ -42,7 +42,7 @@ describe('link', () => {
   it('does not corrupt a host that literally contains "http" elsewhere in the string', () => {
     const key = generateKey();
     const id = generateTunnelId();
-    const link = mintLink('https://myhttphost.example', id, key);
+    const link = mintInvite('https://myhttphost.example', id, key, generateToken());
     // Only the leading scheme should change; the rest of the host must be untouched.
     expect(link.startsWith('wss://myhttphost.example/')).toBe(true);
     expect(link).toMatch(/^wss:\/\/myhttphost\.example\/t\/[0-9a-f]+#.+$/);
@@ -54,7 +54,11 @@ describe('link', () => {
   it('throws on a bad/wrong-length base64 key fragment', () => {
     const id = generateTunnelId();
     // Valid-looking base64url but decodes to the wrong byte length for a secretbox key.
-    expect(() => parseLink(`wss://x.trycloudflare.com/t/${id}#YWJj`)).toThrow(/invalid key length/);
+    // A token is appended so the fragment passes the v2 shape check and reaches the
+    // key-length validation (a tokenless fragment throws the upgrade message first).
+    expect(() => parseLink(`wss://x.trycloudflare.com/t/${id}#YWJj.${generateToken()}`)).toThrow(
+      /invalid key length/,
+    );
   });
 
   it('throws on a path that is not /t/<hexid>', () => {
@@ -74,7 +78,7 @@ describe('link', () => {
   it('excludes the "#key" fragment from wsUrl', () => {
     const key = generateKey();
     const id = generateTunnelId();
-    const link = mintLink('https://abc-def.trycloudflare.com', id, key);
+    const link = mintInvite('https://abc-def.trycloudflare.com', id, key, generateToken());
     const parsed = parseLink(link);
     expect(parsed.wsUrl.includes('#')).toBe(false);
     expect(parsed.wsUrl).not.toContain(keyToBase64url(key));
@@ -83,7 +87,7 @@ describe('link', () => {
   it('round-trips tunnelId+key through a URL with a port and multi-level subdomain', () => {
     const key = generateKey();
     const id = generateTunnelId();
-    const link = mintLink('https://foo.bar.baz.example.com:9443', id, key);
+    const link = mintInvite('https://foo.bar.baz.example.com:9443', id, key, generateToken());
     const parsed = parseLink(link);
     expect(parsed.tunnelId).toBe(id);
     expect(parsed.key).toEqual(key);
@@ -102,10 +106,11 @@ describe('v2 invite links', () => {
     expect(parsed.token).toBe(token);
     expect(keyToBase64url(parsed.key)).toBe(keyToBase64url(key));
   });
-  it('parseLink still accepts a v1 (tokenless) link for now, with token undefined', () => {
+  it('rejects a v1 (tokenless) link with the upgrade message', () => {
     const key = generateKey();
-    const parsed = parseLink(mintLink('https://x.io', 'abc', key));
-    expect(parsed.token).toBeUndefined();
+    expect(() => parseLink(`wss://x.io/t/abc#${keyToBase64url(key)}`)).toThrow(
+      /older tunnel-mcp host/,
+    );
   });
   it('rejects a fragment with more than one dot', () => {
     const key = generateKey();

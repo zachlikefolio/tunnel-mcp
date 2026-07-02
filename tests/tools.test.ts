@@ -38,8 +38,9 @@ describe('registerTools', () => {
     const session = new TunnelSession();
     vi.spyOn(session, 'open').mockResolvedValue({
       tunnelId: 'id1',
+      status: 'waiting_for_members',
+      invites: [],
       joinLink: 'wss://x/t/id1#k',
-      status: 'waiting_for_guest',
     });
     registerTools(server, session, { displayName: 'alice' });
 

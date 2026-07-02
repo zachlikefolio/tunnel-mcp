@@ -1,9 +1,9 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { HostRelay } from '../src/relay/hostRelay.js';
-import { GuestClient } from '../src/relay/guestClient.js';
+import { MemberClient } from '../src/relay/memberClient.js';
 import { SessionLog } from '../src/log/sessionLog.js';
-import { generateKey } from '../src/protocol/crypto.js';
-import { generateTunnelId, parseLink, mintLink } from '../src/protocol/link.js';
+import { generateKey, generateToken } from '../src/protocol/crypto.js';
+import { generateTunnelId, parseLink, mintInvite } from '../src/protocol/link.js';
 import { buildChat, decrypt } from '../src/protocol/messages.js';
 
 const cleanups: Array<() => void> = [];
@@ -17,55 +17,61 @@ async function setup(goal = 'fix the 401') {
   const hostLog = new SessionLog(tunnelId);
   const relay = new HostRelay({ tunnelId, key, goal, hostName: 'alice' }, hostLog);
   const port = await relay.start();
-  const link = parseLink(mintLink(`http://127.0.0.1:${port}`, tunnelId, key));
-  const guestLog = new SessionLog(tunnelId + '-guest');
-  const guest = new GuestClient(link, 'bob', guestLog);
+  const { token } = relay.mintInvites(1)[0];
+  const link = parseLink(mintInvite(`http://127.0.0.1:${port}`, tunnelId, key, token));
+  const memberLog = new SessionLog(tunnelId + '-member');
+  const member = new MemberClient(link, 'bob', memberLog);
   cleanups.push(() => {
-    guest.close();
+    member.close();
     relay.close();
     hostLog.delete();
-    guestLog.delete();
+    memberLog.delete();
   });
-  return { key, relay, guest, hostLog, guestLog };
+  return { key, relay, member, hostLog, memberLog, port, tunnelId };
 }
 
-describe('relay <-> guest', () => {
-  it('guest authenticates, learns the goal, and exchanges encrypted messages', async () => {
-    const { key, relay, guest } = await setup();
-    const joined = await guest.connect(0);
+describe('relay <-> member', () => {
+  it('member authenticates, learns the goal + roster, and exchanges encrypted messages', async () => {
+    const { key, relay, member } = await setup();
+    const joined = await member.connect(0);
     expect(joined.goal).toBe('fix the 401');
-    expect(joined.peerName).toBe('alice');
+    expect(joined.roster.find((r) => r.isHost)?.name).toBe('alice');
     expect(relay.peerConnected).toBe(true);
 
-    // host -> guest
+    // host -> member
     const incoming = new Promise((res) =>
-      guest.once('message', (m) => {
+      member.once('message', (m) => {
         if (m.kind === 'chat') res(decrypt(m, key).text);
       }),
     );
-    relay.submitLocal(buildChat('host', 'whats the error', key));
+    relay.submitLocal(buildChat(relay.hostId, 'whats the error', key));
     expect(await incoming).toBe('whats the error');
 
-    // guest -> host
-    const seq = await guest.say(buildChat('guest', 'http 401 on /auth', key));
+    // member -> host
+    const seq = await member.say(buildChat(member.selfId!, 'http 401 on /auth', key));
     expect(seq).toBeGreaterThan(0);
   });
 
-  it('rejects a guest presenting the wrong key', async () => {
+  it('rejects a member presenting the wrong key', async () => {
     const { relay } = await setup();
     const port = (relay as any).server.address().port;
     const badLink = parseLink(
-      mintLink(`http://127.0.0.1:${port}`, (relay as any).opts.tunnelId, generateKey()),
+      mintInvite(
+        `http://127.0.0.1:${port}`,
+        (relay as any).opts.tunnelId,
+        generateKey(),
+        generateToken(),
+      ),
     );
-    const badGuest = new GuestClient(badLink, 'mallory', new SessionLog('bad-guest'));
-    cleanups.push(() => badGuest.close());
-    await expect(badGuest.connect(0)).rejects.toThrow();
+    const badMember = new MemberClient(badLink, 'mallory', new SessionLog('bad-member'));
+    cleanups.push(() => badMember.close());
+    await expect(badMember.connect(0)).rejects.toThrow();
   });
 
-  it('a guest say rejects (never hangs) when the relay drops', async () => {
-    const { relay, guest, key } = await setup();
-    await guest.connect(0);
+  it('a member say rejects (never hangs) when the relay drops', async () => {
+    const { relay, member, key } = await setup();
+    await member.connect(0);
     await relay.close(); // host gone — no echo will ever come back
-    await expect(guest.say(buildChat('guest', 'hi', key))).rejects.toThrow();
+    await expect(member.say(buildChat(member.selfId!, 'hi', key))).rejects.toThrow();
   });
 });

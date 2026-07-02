@@ -3,11 +3,19 @@ import WebSocket from 'ws';
 import { JoinLink } from '../protocol/link.js';
 import { SessionLog } from '../log/sessionLog.js';
 import { respondChallenge } from '../protocol/crypto.js';
-import { WireMessage, ControlFrame, encodeFrame, decodeFrame } from '../protocol/messages.js';
+import {
+  WireMessage,
+  ControlFrame,
+  RosterEntry,
+  ParticipantId,
+  encodeFrame,
+  decodeFrame,
+} from '../protocol/messages.js';
 import {
   DEFAULT_LISTEN_TIMEOUT_MS,
   GUEST_HANDSHAKE_TIMEOUT_MS,
   GUEST_CONNECT_DEADLINE_MS,
+  PROTOCOL_VERSION,
 } from '../config.js';
 import { makeGuestLookup } from './guestLookup.js';
 
@@ -17,8 +25,10 @@ export interface GuestNetOptions {
   lookup?: unknown; // custom dns.lookup; defaults to makeGuestLookup()
 }
 
-export class GuestClient extends EventEmitter {
+export class MemberClient extends EventEmitter {
   private ws?: WebSocket;
+  selfId?: ParticipantId;
+  private rosterMap = new Map<ParticipantId, RosterEntry>();
   private pending = new Map<
     string,
     { resolve: (seq: number) => void; reject: (e: Error) => void }
@@ -26,14 +36,18 @@ export class GuestClient extends EventEmitter {
 
   constructor(
     private link: JoinLink,
-    private guestName: string,
+    private memberName: string,
     private log: SessionLog,
     private netOpts: GuestNetOptions = {},
   ) {
     super();
   }
 
-  connect(sinceSeq = 0): Promise<{ goal: string; peerName: string }> {
+  roster(): RosterEntry[] {
+    return [...this.rosterMap.values()];
+  }
+
+  connect(sinceSeq = 0): Promise<{ goal: string; selfId: ParticipantId; roster: RosterEntry[] }> {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(this.link.wsUrl, {
         // Resolve system-first, DoH-fallback (bypasses a stale NXDOMAIN negative
@@ -53,11 +67,11 @@ export class GuestClient extends EventEmitter {
         try {
           ws.terminate();
         } catch {
-          /* already gone */
+          /* gone */
         }
         reject(new Error('timed out establishing tunnel'));
       }, this.netOpts.connectDeadlineMs ?? GUEST_CONNECT_DEADLINE_MS);
-      const settleResolve = (v: { goal: string; peerName: string }) => {
+      const settleResolve = (v: { goal: string; selfId: ParticipantId; roster: RosterEntry[] }) => {
         if (settled) return;
         settled = true;
         clearTimeout(deadline);
@@ -71,11 +85,7 @@ export class GuestClient extends EventEmitter {
       };
 
       ws.on('message', (data) => {
-        // The host is untrusted: a malformed or schema-invalid frame must never
-        // crash the guest. decodeFrame guarantees a string `t`, but a variant's
-        // fields (e.g. auth_ok.backlog) are still unchecked, so defend the whole
-        // handler like the host relay does. A swallowed frame just stalls, and
-        // the overall connect deadline rejects on a stall.
+        // The host is untrusted: malformed frames must never crash a member.
         try {
           let frame: ControlFrame;
           try {
@@ -89,16 +99,23 @@ export class GuestClient extends EventEmitter {
               encodeFrame({
                 t: 'auth',
                 response: respondChallenge(frame.nonce, this.link.key),
-                name: this.guestName,
+                name: this.memberName,
                 sinceSeq,
+                token: this.link.token,
+                protocolVersion: PROTOCOL_VERSION,
               }),
             );
           } else if (frame.t === 'auth_ok') {
+            this.selfId = frame.selfId;
+            this.rosterMap = new Map(frame.roster.map((r) => [r.id, r]));
             for (const m of frame.backlog) this.log.record(m);
-            settleResolve({ goal: frame.goal, peerName: frame.peerName });
+            settleResolve({ goal: frame.goal, selfId: frame.selfId, roster: frame.roster });
           } else if (frame.t === 'auth_fail') {
             settleReject(new Error(`auth failed: ${frame.reason}`));
             ws.close();
+          } else if (frame.t === 'roster') {
+            this.rosterMap = new Map(frame.members.map((r) => [r.id, r]));
+            this.emit('roster', frame.members);
           } else if (frame.t === 'msg') {
             this.log.record(frame.msg);
             const waiter = this.pending.get(frame.msg.id);
@@ -109,7 +126,7 @@ export class GuestClient extends EventEmitter {
             this.emit('message', frame.msg);
           }
         } catch {
-          /* untrusted-frame guard: ignore anything malformed */
+          /* untrusted-frame guard */
         }
       });
       ws.on('close', () => this.failPending(new Error('tunnel disconnected')));

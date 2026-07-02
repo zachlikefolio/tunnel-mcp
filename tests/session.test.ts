@@ -4,7 +4,7 @@ import path from 'node:path';
 import { SESSIONS_DIR } from '../src/config.js';
 import { TunnelSession } from '../src/session.js';
 import { newId } from '../src/protocol/messages.js';
-import { GuestClient } from '../src/relay/guestClient.js';
+import { MemberClient } from '../src/relay/memberClient.js';
 
 const sessions: TunnelSession[] = [];
 afterEach(async () => {
@@ -17,7 +17,7 @@ afterEach(async () => {
 });
 
 // Fake cloudflared: the "public url" points straight at the local relay port,
-// so host and guest connect over loopback with no network or real binary.
+// so host and member connect over loopback with no network or real binary.
 function fakeDeps(capturePort: { port?: number }, idleMs?: number) {
   return {
     ensureCloudflared: async () => 'fake',
@@ -31,47 +31,54 @@ function fakeDeps(capturePort: { port?: number }, idleMs?: number) {
 
 // Drain the pre-join system-message backlog, then block for the host's chat to
 // actually arrive over the socket (a single listen(0) would short-circuit on
-// the backlog and miss the in-flight chat).
+// the backlog and miss the in-flight chat). The host is 'alice' in these tests.
 async function waitForHostChat(s: TunnelSession, deadlineMs = 3000) {
   const stop = Date.now() + deadlineMs;
   let since = 0;
   while (Date.now() < stop) {
     const { messages } = await s.listen(since, stop - Date.now());
     for (const m of messages) since = Math.max(since, m.seq);
-    const c = messages.find((m) => m.kind === 'chat' && m.from === 'host');
+    const c = messages.find((m) => m.kind === 'chat' && m.fromName === 'alice');
     if (c) return c;
   }
   throw new Error('timed out waiting for host chat');
 }
 
-describe('TunnelSession (host <-> guest, fake cloudflared)', () => {
+function memberConnected(s: TunnelSession): boolean {
+  return s.status().members.some((m) => !m.isHost && m.connected);
+}
+
+describe('TunnelSession (host <-> member, fake cloudflared)', () => {
   it('opens, joins, exchanges a turn, and tears down', async () => {
     const cap: { port?: number } = {};
     const host = new TunnelSession(fakeDeps(cap));
-    const guest = new TunnelSession();
-    sessions.push(host, guest);
+    const member = new TunnelSession();
+    sessions.push(host, member);
 
     const opened = await host.open('fix the 401', 'alice');
+    expect(opened.status).toBe('waiting_for_members');
     expect(opened.joinLink).toContain('/t/');
 
-    const joined = await guest.join(opened.joinLink, 'bob');
+    const joined = await member.join(opened.joinLink!, 'bob');
     expect(joined.goal).toBe('fix the 401');
-    expect(joined.peer).toBe('alice');
+    expect(joined.self.name).toBe('bob');
+    expect(typeof joined.self.id).toBe('string');
+    expect(joined.members.find((m) => m.isHost)?.name).toBe('alice');
 
-    // host says -> guest listens (wait past the backlog for the actual chat)
+    // host says -> member listens (wait past the backlog for the actual chat)
     await host.say('whats the error?');
-    const chat = await waitForHostChat(guest, 3000);
+    const chat = await waitForHostChat(member, 3000);
     expect(chat.text).toBe('whats the error?');
 
-    // guest says -> host listens
-    const sent = await guest.say('http 401 on /auth');
+    // member says -> host listens
+    const sent = await member.say('http 401 on /auth');
     expect(sent.seq).toBeGreaterThan(0);
     const hostHeard = await host.listen(chat.seq, 3000);
     expect(
       hostHeard.messages.some((m) => m.kind === 'chat' && m.text === 'http 401 on /auth'),
     ).toBe(true);
 
-    expect(host.status().peerConnected).toBe(true);
+    expect(memberConnected(host)).toBe(true);
     await host.close('done');
   });
 
@@ -107,24 +114,18 @@ describe('TunnelSession (host <-> guest, fake cloudflared)', () => {
     expect(opened.joinLink).toContain('/t/');
   });
 
-  it('a leaked join link cannot be reused — a second guest is rejected (single-use)', async () => {
+  it('a leaked join link cannot be reused — a second member is rejected (single-use)', async () => {
     const host = new TunnelSession(fakeDeps({}));
-    const guest1 = new TunnelSession();
-    const guest2 = new TunnelSession();
-    sessions.push(host, guest1, guest2);
+    const member1 = new TunnelSession();
+    const member2 = new TunnelSession();
+    sessions.push(host, member1, member2);
 
     const opened = await host.open('goal', 'alice');
-    await guest1.join(opened.joinLink, 'bob'); // consumes the single-use link
-    await guest1.close();
+    await member1.join(opened.joinLink!, 'bob'); // consumes the single-use invite token
+    await member1.close();
 
-    // Wait for the host relay to observe guest1's disconnect (slot free again).
-    const deadline = Date.now() + 2000;
-    while (host.status().peerConnected && Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 10));
-    }
-
-    // Anyone who later obtains the same link cannot join.
-    await expect(guest2.join(opened.joinLink, 'mallory')).rejects.toThrow(/already used/i);
+    // Anyone who later obtains the same link presents an already-redeemed token.
+    await expect(member2.join(opened.joinLink!, 'mallory')).rejects.toThrow(/already used/i);
   });
 
   it('open() reports the join-link expiry window (default 10 minutes)', async () => {
@@ -143,6 +144,35 @@ describe('TunnelSession (host <-> guest, fake cloudflared)', () => {
     expect(opened.invite).toContain('fix the 401');
   });
 
+  it('open({ invites: n }) mints n invites and omits the single-invite continuity trio', async () => {
+    const host = new TunnelSession(fakeDeps({}));
+    sessions.push(host);
+    const opened = await host.open('team debug', 'alice', { invites: 3 });
+    expect(opened.invites).toHaveLength(3);
+    expect(opened.joinLink).toBeUndefined();
+    expect(opened.invite).toBeUndefined();
+    const links = new Set(opened.invites.map((i) => i.joinLink));
+    expect(links.size).toBe(3); // distinct tokens per invite
+  });
+
+  it('only the host can mint further invites', async () => {
+    const host = new TunnelSession(fakeDeps({}));
+    const member = new TunnelSession();
+    sessions.push(host, member);
+    const opened = await host.open('goal', 'alice');
+    await member.join(opened.joinLink!, 'bob');
+    expect(() => member.invite(1)).toThrow(/only the host can mint invites/);
+    expect(host.invite(1)).toHaveLength(1);
+  });
+
+  it('a leaked v1 (tokenless) link is rejected with the upgrade message', async () => {
+    const member = new TunnelSession();
+    sessions.push(member);
+    await expect(member.join('wss://x.io/t/abc123#YWJjZGVm', 'bob')).rejects.toThrow(
+      /older tunnel-mcp host/,
+    );
+  });
+
   it('an expired join link is rejected end-to-end', async () => {
     const host = new TunnelSession({
       ensureCloudflared: async () => 'fake',
@@ -150,35 +180,30 @@ describe('TunnelSession (host <-> guest, fake cloudflared)', () => {
         publicUrl: `http://127.0.0.1:${port}`,
         stop() {},
       }),
-      joinTtlMs: 20, // window lapses before the guest joins
+      joinTtlMs: 20, // window lapses before the member joins
     });
-    const guest = new TunnelSession();
-    sessions.push(host, guest);
+    const member = new TunnelSession();
+    sessions.push(host, member);
 
     const opened = await host.open('goal', 'alice');
     await new Promise((r) => setTimeout(r, 60));
-    await expect(guest.join(opened.joinLink, 'bob')).rejects.toThrow(/expired/i);
+    await expect(member.join(opened.joinLink!, 'bob')).rejects.toThrow(/invite expired/i);
   });
 
   it('the join-link expiry window starts at mint time, not before cloudflared provisioning', async () => {
     const host = new TunnelSession({
       ensureCloudflared: async () => 'fake',
-      // Provisioning takes longer than the whole join TTL. If the window were
-      // anchored at relay construction, the link would already be "expired" the
-      // moment the host receives it — so this join would be rejected.
       startCloudflared: async (_b: string, port: number) => {
         await new Promise((r) => setTimeout(r, 200));
         return { publicUrl: `http://127.0.0.1:${port}`, stop() {} };
       },
       joinTtlMs: 100,
     });
-    const guest = new TunnelSession();
-    sessions.push(host, guest);
+    const member = new TunnelSession();
+    sessions.push(host, member);
 
     const opened = await host.open('goal', 'alice');
-    // Join right away: must succeed, because the window began when the link was
-    // minted (after the 200ms provisioning), not at relay construction.
-    const joined = await guest.join(opened.joinLink, 'bob');
+    const joined = await member.join(opened.joinLink!, 'bob');
     expect(joined.goal).toBe('goal');
   });
 
@@ -188,10 +213,6 @@ describe('TunnelSession (host <-> guest, fake cloudflared)', () => {
     await host.open('goal', 'alice');
     await host.close('done');
 
-    // close() clears role/source but historically left log/key set, so a
-    // post-close listen() fell through to `(this.source as
-    // EventEmitter).on(...)` with source === undefined and threw a raw
-    // TypeError instead of a clean domain error.
     await expect(host.listen(0, 50)).rejects.toThrow('no open tunnel');
     await expect(host.say('hello')).rejects.toThrow('no open tunnel');
   });
@@ -211,36 +232,30 @@ describe('TunnelSession (host <-> guest, fake cloudflared)', () => {
     expect(host.isOpen).toBe(false);
   });
 
-  it('decrypt-totality: a forged/malformed chat body from the untrusted guest surfaces as [unreadable] instead of throwing or poisoning the batch', async () => {
+  it('decrypt-totality: a forged/malformed chat body from an untrusted member surfaces as [unreadable] instead of throwing or poisoning the batch', async () => {
     const host = new TunnelSession(fakeDeps({}));
-    const guest = new TunnelSession();
-    sessions.push(host, guest);
+    const member = new TunnelSession();
+    sessions.push(host, member);
 
     const opened = await host.open('goal', 'alice');
-    await guest.join(opened.joinLink, 'bob');
+    await member.join(opened.joinLink!, 'bob');
 
-    // Reach past the public API's buildChat() (which always produces valid
-    // ciphertext) straight to the guest's underlying GuestClient.say(), so we
-    // can send a 'send' frame whose body is NOT valid sealed ciphertext. The
-    // relay's frame-shape check only requires kind === 'chat' and a string
-    // body, so this forged frame is accepted and relayed to the host exactly
-    // like a malicious/buggy peer's payload would be.
-    const guestClient = (guest as unknown as { guest: GuestClient }).guest;
-    expect(guestClient).toBeInstanceOf(GuestClient);
+    // Reach past the public say() straight to the underlying MemberClient.say()
+    // so we can send a 'send' frame whose body is NOT valid sealed ciphertext.
+    const memberClient = (member as unknown as { member: MemberClient }).member;
+    expect(memberClient).toBeInstanceOf(MemberClient);
     const forged = {
       id: newId(),
       seq: -1,
-      from: 'guest' as const,
+      from: memberClient.selfId ?? 'member',
       kind: 'chat' as const,
       body: 'not-valid-sealed-ciphertext',
       ts: 0,
     };
-    const forgedSeq = await guestClient.say(forged);
+    const forgedSeq = await memberClient.say(forged);
     expect(forgedSeq).toBeGreaterThan(0);
 
-    // Also send a legitimate chat right after so we can prove the batch as a
-    // whole is unaffected by the bad message.
-    await guest.say('a perfectly normal message');
+    await member.say('a perfectly normal message');
 
     const { messages } = await host.listen(0, 3000);
     const bad = messages.find((m) => m.id === forged.id);
@@ -252,10 +267,10 @@ describe('TunnelSession (host <-> guest, fake cloudflared)', () => {
     );
   });
 
-  it('status() reports openedAt, role, goal, and an increasing lastSeq as activity occurs', async () => {
+  it('status() reports openedAt, role, goal, members, pendingInvites, and an increasing lastSeq', async () => {
     const host = new TunnelSession(fakeDeps({}));
-    const guest = new TunnelSession();
-    sessions.push(host, guest);
+    const member = new TunnelSession();
+    sessions.push(host, member);
 
     const before = Date.now();
     const opened = await host.open('measure status', 'alice');
@@ -263,39 +278,41 @@ describe('TunnelSession (host <-> guest, fake cloudflared)', () => {
     expect(hostStatus.role).toBe('host');
     expect(hostStatus.goal).toBe('measure status');
     expect(hostStatus.openedAt).toBeGreaterThanOrEqual(before);
-    expect(hostStatus.peerConnected).toBe(false);
+    expect(hostStatus.members).toEqual([{ name: 'alice', isHost: true, connected: true }]);
+    expect(hostStatus.pendingInvites).toBe(1);
     expect(hostStatus.lastSeq).toBeGreaterThan(0); // the open() system message
     const seqAfterOpen = hostStatus.lastSeq;
 
-    const joined = await guest.join(opened.joinLink, 'bob');
+    const joined = await member.join(opened.joinLink!, 'bob');
     expect(joined.goal).toBe('measure status');
-    const guestStatus = guest.status();
-    expect(guestStatus.role).toBe('guest');
-    expect(guestStatus.goal).toBe('measure status');
-    expect(guestStatus.openedAt).toBeGreaterThanOrEqual(before);
-    expect(guestStatus.peerConnected).toBe(true);
+    const memberStatus = member.status();
+    expect(memberStatus.role).toBe('member');
+    expect(memberStatus.goal).toBe('measure status');
+    expect(memberStatus.openedAt).toBeGreaterThanOrEqual(before);
+    expect(memberStatus.members.some((m) => m.isHost && m.connected)).toBe(true);
+    expect(memberStatus.members.some((m) => !m.isHost && m.name === 'bob' && m.connected)).toBe(
+      true,
+    );
 
     await host.say('activity bumps lastSeq');
-    await waitForHostChat(guest, 3000);
+    await waitForHostChat(member, 3000);
     const afterActivity = host.status();
     expect(afterActivity.lastSeq).toBeGreaterThan(seqAfterOpen);
-    expect(afterActivity.peerConnected).toBe(true);
+    expect(memberConnected(host)).toBe(true);
+    expect(afterActivity.pendingInvites).toBe(0); // the lone invite was redeemed
   });
 
-  it('a guest joining after the host has already said something sees it in the join backlog', async () => {
+  it('a member joining after the host has already said something sees it in the join backlog', async () => {
     const host = new TunnelSession(fakeDeps({}));
-    const guest = new TunnelSession();
-    sessions.push(host, guest);
+    const member = new TunnelSession();
+    sessions.push(host, member);
 
     const opened = await host.open('catch-up test', 'alice');
     const early = await host.say('this happened before you joined');
 
-    await guest.join(opened.joinLink, 'bob');
+    await member.join(opened.joinLink!, 'bob');
 
-    // The backlog is delivered synchronously during auth_ok and recorded into
-    // the guest's local log before join() resolves, so listen(0) must return
-    // it immediately without waiting on a live 'message' event.
-    const backlog = await guest.listen(0, 500);
+    const backlog = await member.listen(0, 500);
     const seen = backlog.messages.find(
       (m) => m.kind === 'chat' && m.text === 'this happened before you joined',
     );

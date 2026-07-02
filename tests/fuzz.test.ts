@@ -2,7 +2,7 @@ import { describe, it } from 'vitest';
 import fc from 'fast-check';
 import { decodeFrame, decrypt } from '../src/protocol/messages.js';
 import type { WireMessage } from '../src/protocol/messages.js';
-import { parseLink, mintLink, generateTunnelId } from '../src/protocol/link.js';
+import { parseLink, mintInvite, generateTunnelId } from '../src/protocol/link.js';
 import { generateKey, keyToBase64url, generateToken } from '../src/protocol/crypto.js';
 
 // Property-based fuzzing of the three decoders that consume UNTRUSTED input: a
@@ -76,15 +76,18 @@ describe('fuzz: untrusted-input decoders', () => {
       .map(([scheme, host, tid, k]) => `${scheme}://${host}/t/${tid}#${k}`);
     fc.assert(fc.property(linkish, check), { numRuns: 2000 });
 
-    // Genuinely VALID links (real 32-byte key + hex tunnel id over a fuzzed host),
-    // so parseLink MUST return and the success-branch invariants actually run —
-    // a regression that returned a non-32-byte key or non-hex id would fail here.
+    // Genuinely VALID links (real 32-byte key + token + hex tunnel id over a fuzzed
+    // host), so parseLink MUST return and the success-branch invariants actually run
+    // — a regression that returned a non-32-byte key or non-hex id would fail here.
     const validLink = fc
       .tuple(
         fc.domain(),
         fc.uint8Array({ minLength: 1, maxLength: 12 }).map((b) => Buffer.from(b).toString('hex')),
       )
-      .map(([host, tid]) => `wss://${host}/t/${tid}#${keyToBase64url(generateKey())}`);
+      .map(
+        ([host, tid]) =>
+          `wss://${host}/t/${tid}#${keyToBase64url(generateKey())}.${generateToken()}`,
+      );
     fc.assert(
       fc.property(validLink, (s) => {
         const l = parseLink(s); // must NOT throw for a well-formed link
@@ -121,7 +124,7 @@ describe('fuzz: untrusted-input decoders', () => {
         (base) => {
           const k = generateKey();
           const tid = generateTunnelId();
-          const parsed = parseLink(mintLink(base, tid, k));
+          const parsed = parseLink(mintInvite(base, tid, k, generateToken()));
           return parsed.tunnelId === tid && keyToBase64url(parsed.key) === keyToBase64url(k);
         },
       ),
