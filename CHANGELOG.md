@@ -22,21 +22,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
-Protocol v2. A join link minted by a v1 host (or presented to a v1 guest) is
-now rejected with an explicit upgrade message instead of connecting — if the
-other side can't upgrade yet, join with the old client via
-`npx -y tunnel-mcp@0.1`.
+Protocol v2, incompatible with v1 in both directions:
+
+- **A v2 client given an old v1 (tokenless) link** gets an explicit
+  upgrade-and-retry message naming the fix — the modern client recognizes the
+  old link and tells you what to do. If the host is genuinely still on the old
+  code and can't upgrade, you can join their v1 tunnel with the old client via
+  `npx -y tunnel-mcp@0.1`.
+- **An old v1 client given a v2 link (or dialing a v2 host)** cannot connect:
+  the v1 client fails locally with a generic error (its parser rejects the
+  `#key.token` fragment as an invalid key), and a v1 client that does reach a
+  v2 host is turned away as incompatible. The remedy here is to **upgrade** that
+  client (`npx -y tunnel-mcp@latest`), not downgrade — a v2 room cannot admit a
+  v1 client.
 
 Migration for anything calling the library API directly (MCP tool callers are
 unaffected beyond the richer response shapes):
 
-| API                | v1 (0.1.x)                                                                          | v2 (this change)                                                                                                                                                                                                                              |
-| ------------------ | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `session.open()`   | `{ tunnelId, joinLink, status: 'waiting_for_guest', joinLinkExpiresInSec, invite }` | `{ tunnelId, status: 'waiting_for_members', invites: [{ joinLink, invite, expiresInSec }, ...] }`, plus top-level `joinLink` / `invite` / `joinLinkExpiresInSec` **only** when `invites.length === 1` (the default two-party continuity trio) |
-| `session.join()`   | `{ tunnelId, goal, peer }`                                                          | `{ tunnelId, goal, self: { id, name }, members: RosterEntry[] }`                                                                                                                                                                              |
-| `session.status()` | `{ role, peerConnected, goal, lastSeq, openedAt }`                                  | `{ role, goal, lastSeq, openedAt, members: RosterEntry[], pendingInvites }` — **`peerConnected` removed**, use `members[].connected` instead                                                                                                  |
-| Wire protocol      | v1 links/frames accepted                                                            | v1 is incompatible — a v1 link now throws an upgrade-and-retry error; escape hatch: `npx -y tunnel-mcp@0.1`                                                                                                                                   |
-| `Role` type        | exported from `protocol/messages.ts` (`'host' \| 'guest'`)                          | **removed** — replaced by the opaque `ParticipantId` and the `RosterEntry` roster shape                                                                                                                                                       |
+| API                | v1 (0.1.x)                                                                          | v2 (this change)                                                                                                                                                                                                                                                                                                      |
+| ------------------ | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session.open()`   | `{ tunnelId, joinLink, status: 'waiting_for_guest', joinLinkExpiresInSec, invite }` | `{ tunnelId, status: 'waiting_for_members', invites: [{ joinLink, invite, expiresInSec }, ...] }`, plus top-level `joinLink` / `invite` / `joinLinkExpiresInSec` **only** when `invites.length === 1` (the default two-party continuity trio)                                                                         |
+| `session.join()`   | `{ tunnelId, goal, peer }`                                                          | `{ tunnelId, goal, self: { id, name }, members: RosterEntry[] }`                                                                                                                                                                                                                                                      |
+| `session.status()` | `{ role, peerConnected, goal, lastSeq, openedAt }`                                  | `{ role, goal, lastSeq, openedAt, members: { name, isHost, connected }[], pendingInvites }` — **`peerConnected` removed**, use `members[].connected` instead                                                                                                                                                          |
+| Wire protocol      | v1 links/frames accepted                                                            | v1 and v2 are mutually incompatible. A v2 client on a v1 link throws an upgrade-and-retry error (escape hatch: `npx -y tunnel-mcp@0.1`). A v1 client on a v2 link/host cannot connect — it fails with a generic local error or is refused by the host as incompatible, and must upgrade (`npx -y tunnel-mcp@latest`). |
+| `Role` type        | exported from `protocol/messages.ts` (`'host' \| 'guest'`)                          | **removed** — replaced by the opaque `ParticipantId` and the `RosterEntry` roster shape                                                                                                                                                                                                                               |
 
 ## [0.1.9] - 2026-07-02
 
