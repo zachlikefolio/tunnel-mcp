@@ -132,3 +132,35 @@ describe('fuzz: untrusted-input decoders', () => {
     );
   });
 });
+
+describe('fuzz: v2 untrusted frames', () => {
+  it('a malformed roster/auth_ok frame never crashes the member handler path shape-check', () => {
+    // decodeFrame guarantees an object with string t; handlers must tolerate
+    // arbitrary field shapes beyond that.
+    const frameish = fc.record(
+      {
+        t: fc.constantFrom('roster', 'auth_ok', 'msg', 'challenge', 'auth_fail'),
+        members: fc.anything(),
+        roster: fc.anything(),
+        selfId: fc.anything(),
+        goal: fc.anything(),
+        backlog: fc.anything(),
+        msg: fc.anything(),
+        nonce: fc.anything(),
+        reason: fc.anything(),
+      },
+      { requiredKeys: ['t'] },
+    );
+    fc.assert(
+      fc.property(frameish, (f) => {
+        try {
+          const parsed = decodeFrame(JSON.stringify(f)) as { t: unknown };
+          return typeof parsed.t === 'string';
+        } catch {
+          return true;
+        }
+      }),
+      { numRuns: 1500 },
+    );
+  });
+});

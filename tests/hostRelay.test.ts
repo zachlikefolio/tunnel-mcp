@@ -405,6 +405,51 @@ describe('HostRelay invite tokens', () => {
     if (reply.t === 'auth_fail') expect(reply.reason).toBe('invalid invite');
   });
 
+  it('two sockets racing one token: exactly one admitted, the loser gets "invite already used"', async () => {
+    const { key, url } = await makeRelay();
+    const token = relay!.mintInvites(1)[0].token;
+
+    // Connect both sockets and drain their challenges up front, so the only
+    // thing left to race is the redeem step inside onAuth.
+    async function connectAndChallenge(
+      name: string,
+    ): Promise<{ ws: WebSocket; next: () => Promise<ControlFrame>; nonce: string; name: string }> {
+      const { ws, next } = connect(url);
+      await waitForOpen(ws);
+      const challenge = await next();
+      if (challenge.t !== 'challenge') throw new Error('expected challenge');
+      return { ws, next, nonce: challenge.nonce, name };
+    }
+
+    async function authWith(c: Awaited<ReturnType<typeof connectAndChallenge>>): Promise<string> {
+      c.ws.send(
+        encodeFrame({
+          t: 'auth',
+          response: respondChallenge(c.nonce, key),
+          name: c.name,
+          sinceSeq: 0,
+          token,
+          protocolVersion: PROTOCOL_VERSION,
+        }),
+      );
+      const reply = await c.next();
+      if (reply.t === 'auth_ok') return 'ok';
+      if (reply.t === 'auth_fail') return reply.reason;
+      throw new Error(`unexpected frame ${reply.t}`);
+    }
+
+    const [a, b] = await Promise.all([
+      connectAndChallenge('racer-a'),
+      connectAndChallenge('racer-b'),
+    ]);
+    const [ra, rb] = await Promise.all([authWith(a), authWith(b)]);
+
+    const oks = [ra, rb].filter((r) => r === 'ok');
+    const fails = [ra, rb].filter((r) => r === 'invite already used');
+    expect(oks).toHaveLength(1);
+    expect(fails).toHaveLength(1);
+  });
+
   it('mintInvites over the remaining seats throws', () => {
     const key = generateKey();
     const id = generateTunnelId();
