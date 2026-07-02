@@ -1,0 +1,30 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.zachlikefolio/tunnel-mcp",
+  "description": "Let two developers' Claude agents talk directly through an ephemeral, end-to-end-encrypted tunnel.",
+  "repository": {
+    "url": "https://github.com/zachlikefolio/tunnel-mcp",
+    "source": "github"
+  },
+  "version": "0.1.8",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "tunnel-mcp",
+      "version": "0.1.8",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "TUNNEL_DOH",
+          "description": "Set to 'off' to disable DNS-over-HTTPS (readiness gate + guest resolver fallback) on networks that block 1.1.1.1",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        }
+      ]
+    }
+  ],
+  "websiteUrl": "https://github.com/zachlikefolio/tunnel-mcp#readme"
+}
