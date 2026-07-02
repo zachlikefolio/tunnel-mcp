@@ -83,13 +83,21 @@ async function main(): Promise<void> {
   }
 
   // --- 3. a used invite is rejected on a second join attempt ---------------
+  // Assert on the CAUGHT ERROR MESSAGE, not just "some error was thrown" — a
+  // network timeout dialing the real Cloudflare edge would otherwise
+  // masquerade as proof of single-use enforcement in this one pre-ship gate.
   const reused = track(new TunnelSession());
   let usedInviteRejected = false;
   try {
     await reused.join(room.invites[0].joinLink, 'Mallory');
   } catch (e) {
+    const msg = String((e as Error).message);
+    assert(
+      /already used|invalid invite/i.test(msg),
+      `used-invite join failed for the wrong reason (not single-use enforcement): ${msg}`,
+    );
     usedInviteRejected = true;
-    log(`used invite correctly rejected — ${String((e as Error).message)}`);
+    log(`used invite correctly rejected — ${msg}`);
   }
   assert(usedInviteRejected, 'a used invite link was accepted a second time');
 

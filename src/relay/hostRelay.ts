@@ -92,6 +92,10 @@ export class HostRelay extends EventEmitter {
     return new Promise((resolve) => {
       this.server = http.createServer();
       this.wss = new WebSocketServer({ server: this.server, path: `/t/${this.opts.tunnelId}` });
+      // A post-listen server-level error (e.g. ECONNRESET on a flaky tunnel
+      // hop) must never crash the relay — log to stderr only, same stance as
+      // the per-socket 'error' handler below.
+      this.wss.on('error', (err) => console.error('[tunnel] relay server error:', err));
       this.wss.on('connection', (ws) => this.onConnection(ws));
       this.server.listen(0, '127.0.0.1', () => {
         const addr = this.server!.address();

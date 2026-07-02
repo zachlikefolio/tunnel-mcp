@@ -1,39 +1,9 @@
-import { describe, it, expect, afterEach } from 'vitest';
-import fs from 'node:fs';
-import path from 'node:path';
-import { SESSIONS_DIR } from '../src/config.js';
+import { describe, it, expect } from 'vitest';
 import { SessionLog } from '../src/log/sessionLog.js';
-import { buildSystem } from '../src/protocol/messages.js';
 
 const ID = 'testsession01';
-afterEach(() => {
-  try {
-    fs.rmSync(path.join(SESSIONS_DIR, `${ID}.jsonl`));
-  } catch {}
-});
 
 describe('SessionLog', () => {
-  it('append assigns monotonic seq and persists to jsonl', () => {
-    const log = new SessionLog(ID);
-    const a = log.append(buildSystem('host', 'one'));
-    const b = log.append(buildSystem('host', 'two'));
-    expect(a.seq).toBe(1);
-    expect(b.seq).toBe(2);
-    expect(log.lastSeq).toBe(2);
-    const file = fs
-      .readFileSync(path.join(SESSIONS_DIR, `${ID}.jsonl`), 'utf8')
-      .trim()
-      .split('\n');
-    expect(file).toHaveLength(2);
-  });
-
-  it('since returns only newer messages', () => {
-    const log = new SessionLog(ID);
-    log.append(buildSystem('host', 'one'));
-    const b = log.append(buildSystem('host', 'two'));
-    expect(log.since(1).map((m) => m.id)).toEqual([b.id]);
-  });
-
   it('record stores an already-seq message without re-seqing', () => {
     const log = new SessionLog(ID);
     log.record({ id: 'x', seq: 5, from: 'guest', kind: 'system', body: 'hi', ts: 1 });
@@ -41,35 +11,16 @@ describe('SessionLog', () => {
     expect(log.since(4).map((m) => m.id)).toEqual(['x']);
   });
 
-  it('delete clears memory and removes the file', () => {
+  it('delete clears memory', () => {
     const log = new SessionLog(ID);
-    log.append(buildSystem('host', 'one'));
+    log.record({ id: 'a', seq: 1, from: 'host', kind: 'system', body: 'one', ts: 1 });
     log.delete();
     expect(log.all()).toHaveLength(0);
-    expect(fs.existsSync(path.join(SESSIONS_DIR, `${ID}.jsonl`))).toBe(false);
-  });
-
-  it('append after delete is a no-op — it never recreates the file (orphan-log regression)', () => {
-    const log = new SessionLog(ID);
-    log.append(buildSystem('host', 'one'));
-    log.delete();
-    const lastSeqAfterDelete = log.lastSeq;
-
-    // Simulates a late event (e.g. a guest socket's 'close' handler racing
-    // session teardown) calling append() after the log has been deleted.
-    const stub = log.append(buildSystem('host', 'late straggler'));
-
-    expect(fs.existsSync(path.join(SESSIONS_DIR, `${ID}.jsonl`))).toBe(false);
-    expect(log.lastSeq).toBe(lastSeqAfterDelete);
-    expect(log.all()).toHaveLength(0);
-    // The caller still gets back a finalized-shaped message (no crash for
-    // code that reads msg.seq off the return value), it's just not recorded.
-    expect(stub.body).toBe('late straggler');
   });
 
   it('record after delete is a no-op', () => {
     const log = new SessionLog(ID);
-    log.append(buildSystem('host', 'one'));
+    log.record({ id: 'a', seq: 1, from: 'host', kind: 'system', body: 'one', ts: 1 });
     log.delete();
     log.record({ id: 'late', seq: 99, from: 'guest', kind: 'system', body: 'hi', ts: 1 });
     expect(log.all()).toHaveLength(0);
@@ -80,20 +31,9 @@ describe('SessionLog', () => {
 describe('SessionLog (edge cases)', () => {
   const uniqueId = () =>
     `sessionlog-edge-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  let currentId: string;
 
-  afterEach(() => {
-    if (currentId) {
-      try {
-        fs.rmSync(path.join(SESSIONS_DIR, `${currentId}.jsonl`));
-      } catch {}
-    }
-  });
-
-  it('record() advances lastSeq to the max seq seen and never writes to disk', () => {
-    currentId = uniqueId();
-    const log = new SessionLog(currentId);
-    const filePath = path.join(SESSIONS_DIR, `${currentId}.jsonl`);
+  it('record() advances lastSeq to the max seq seen, in memory only', () => {
+    const log = new SessionLog(uniqueId());
 
     log.record({ id: 'a', seq: 3, from: 'host', kind: 'system', body: 'a', ts: 1 });
     expect(log.lastSeq).toBe(3);
@@ -105,59 +45,56 @@ describe('SessionLog (edge cases)', () => {
     // A higher seq should advance lastSeq to that value.
     log.record({ id: 'c', seq: 10, from: 'host', kind: 'system', body: 'c', ts: 3 });
     expect(log.lastSeq).toBe(10);
+  });
 
-    // record() must never touch disk, regardless of how many calls happen.
-    expect(fs.existsSync(filePath)).toBe(false);
+  it('record() ignores a non-finite seq for cursor purposes but keeps the message', () => {
+    const log = new SessionLog(uniqueId());
+    log.record({ id: 'a', seq: 5, from: 'host', kind: 'system', body: 'a', ts: 1 });
+    expect(log.lastSeq).toBe(5);
+
+    // NaN must not poison lastSeq (an untrusted host could send a bad seq).
+    log.record({ id: 'nan', seq: NaN, from: 'guest', kind: 'system', body: 'bad', ts: 2 });
+    expect(log.lastSeq).toBe(5);
+
+    // Infinity must not poison lastSeq either.
+    log.record({ id: 'inf', seq: Infinity, from: 'guest', kind: 'system', body: 'bad', ts: 3 });
+    expect(log.lastSeq).toBe(5);
+
+    // record() never throws on bad input, and the message is still retained.
+    expect(log.all().map((m) => m.id)).toEqual(['a', 'nan', 'inf']);
+
+    // A subsequent valid, higher seq still advances the cursor normally.
+    log.record({ id: 'b', seq: 8, from: 'host', kind: 'system', body: 'b', ts: 4 });
+    expect(log.lastSeq).toBe(8);
   });
 
   it('since(0) returns all, since(lastSeq) returns empty, since(mid) returns only the tail', () => {
-    currentId = uniqueId();
-    const log = new SessionLog(currentId);
-    const a = log.append(buildSystem('host', 'one'));
-    const b = log.append(buildSystem('host', 'two'));
-    const c = log.append(buildSystem('host', 'three'));
+    const log = new SessionLog(uniqueId());
+    const a = { id: 'a', seq: 1, from: 'host', kind: 'system' as const, body: 'one', ts: 1 };
+    const b = { id: 'b', seq: 2, from: 'host', kind: 'system' as const, body: 'two', ts: 2 };
+    const c = { id: 'c', seq: 3, from: 'host', kind: 'system' as const, body: 'three', ts: 3 };
+    log.record(a);
+    log.record(b);
+    log.record(c);
 
     expect(log.since(0).map((m) => m.id)).toEqual([a.id, b.id, c.id]);
     expect(log.since(log.lastSeq)).toEqual([]);
     expect(log.since(b.seq).map((m) => m.id)).toEqual([c.id]);
   });
 
-  it('multiple appends write multiple jsonl lines with monotonically increasing seq', () => {
-    currentId = uniqueId();
-    const log = new SessionLog(currentId);
-    const filePath = path.join(SESSIONS_DIR, `${currentId}.jsonl`);
-
-    const n = 5;
-    const results = [];
-    for (let i = 0; i < n; i++) {
-      results.push(log.append(buildSystem('host', `msg-${i}`)));
-    }
-
-    const seqs = results.map((m) => m.seq);
-    expect(seqs).toEqual([1, 2, 3, 4, 5]);
-
-    const lines = fs.readFileSync(filePath, 'utf8').trim().split('\n');
-    expect(lines).toHaveLength(n);
-    const parsedSeqs = lines.map((l) => JSON.parse(l).seq);
-    expect(parsedSeqs).toEqual([1, 2, 3, 4, 5]);
-  });
-
   it('delete() is idempotent — calling twice does not throw', () => {
-    currentId = uniqueId();
-    const log = new SessionLog(currentId);
-    log.append(buildSystem('host', 'one'));
+    const log = new SessionLog(uniqueId());
+    log.record({ id: 'a', seq: 1, from: 'host', kind: 'system', body: 'one', ts: 1 });
 
     expect(() => log.delete()).not.toThrow();
     expect(() => log.delete()).not.toThrow();
     expect(log.all()).toHaveLength(0);
-    expect(fs.existsSync(path.join(SESSIONS_DIR, `${currentId}.jsonl`))).toBe(false);
   });
 
   it('all() returns a copy — mutating the returned array does not affect the log', () => {
-    currentId = uniqueId();
-    const log = new SessionLog(currentId);
-    log.append(buildSystem('host', 'one'));
-    log.append(buildSystem('host', 'two'));
+    const log = new SessionLog(uniqueId());
+    log.record({ id: 'a', seq: 1, from: 'host', kind: 'system', body: 'one', ts: 1 });
+    log.record({ id: 'b', seq: 2, from: 'host', kind: 'system', body: 'two', ts: 2 });
 
     const snapshot = log.all();
     expect(snapshot).toHaveLength(2);

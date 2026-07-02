@@ -73,7 +73,7 @@ export function registerTools(
   register(
     server,
     'tunnel_say',
-    { description: 'Send a chat message to the peer agent.', inputSchema: { text: z.string() } },
+    { description: 'Send a chat message to the room.', inputSchema: { text: z.string() } },
     async ({ text }) => ok(await session.say(text)),
   );
 
@@ -82,7 +82,7 @@ export function registerTools(
     'tunnel_listen',
     {
       description:
-        'Block until the peer replies (or timeout). Pass the highest seq you have already seen.',
+        'Block until the next message arrives (or timeout). Pass the highest seq you have already seen.',
       inputSchema: { sinceSeq: z.number().default(0), timeoutMs: z.number().optional() },
     },
     async ({ sinceSeq, timeoutMs }) =>
