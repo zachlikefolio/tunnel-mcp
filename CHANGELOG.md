@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet.
 
+## [0.1.9] - 2026-07-02
+
+### Added
+
+- **`tunnel_open` now returns `invite`** — a ready-to-forward plain-text message
+  containing the one-time setup command (`claude mcp add tunnel -- npx -y
+tunnel-mcp`) and the join link, so the host's human can paste one message to
+  the other developer instead of explaining the install. The tool description
+  directs the agent to relay it verbatim.
+
 ## [0.1.8] - 2026-07-02
 
 ### Added
@@ -171,7 +181,8 @@ install-skill` copies the `tunnel-etiquette` skill into `~/.claude/skills`
   declaring a fix "confirmed".
 - Test suite of 109 tests built with vitest, developed test-first (TDD).
 
-[Unreleased]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.9...HEAD
+[0.1.9]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/zachlikefolio/tunnel-mcp/compare/v0.1.5...v0.1.6

@@ -134,6 +134,15 @@ describe('TunnelSession (host <-> guest, fake cloudflared)', () => {
     expect(opened.joinLinkExpiresInSec).toBe(600);
   });
 
+  it('open() returns a forwardable invite carrying the join link and setup command', async () => {
+    const host = new TunnelSession(fakeDeps({}));
+    sessions.push(host);
+    const opened = await host.open('fix the 401', 'alice');
+    expect(opened.invite).toContain(opened.joinLink);
+    expect(opened.invite).toContain('claude mcp add tunnel -- npx -y tunnel-mcp');
+    expect(opened.invite).toContain('fix the 401');
+  });
+
   it('an expired join link is rejected end-to-end', async () => {
     const host = new TunnelSession({
       ensureCloudflared: async () => 'fake',

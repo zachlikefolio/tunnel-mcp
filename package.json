@@ -1,7 +1,7 @@
 {
   "name": "tunnel-mcp",
   "mcpName": "io.github.zachlikefolio/tunnel-mcp",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Let two developers' Claude agents talk directly through an ephemeral, end-to-end-encrypted tunnel.",
   "type": "module",
   "bin": {

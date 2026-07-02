@@ -20,6 +20,7 @@ import {
   DEFAULT_JOIN_LINK_TTL_MS,
   OPEN_RETRY_ATTEMPTS,
 } from './config.js';
+import { buildInvite } from './invite.js';
 
 export interface SessionDeps {
   ensureCloudflared: () => Promise<string>;
@@ -67,6 +68,7 @@ export class TunnelSession {
     joinLink: string;
     status: string;
     joinLinkExpiresInSec: number;
+    invite: string;
   }> {
     if (this.isOpen) throw new Error('a tunnel is already open in this process');
     const key = generateKey();
@@ -118,11 +120,13 @@ export class TunnelSession {
     });
 
     relay.submitLocal(buildSystem('host', `tunnel opened — goal: ${goal}`));
+    const joinLinkExpiresInSec = Math.round(joinTtlMs / 1000);
     return {
       tunnelId,
       joinLink,
       status: 'waiting_for_guest',
-      joinLinkExpiresInSec: Math.round(joinTtlMs / 1000),
+      joinLinkExpiresInSec,
+      invite: buildInvite({ goal, joinLink, expiresInSec: joinLinkExpiresInSec }),
     };
   }
 

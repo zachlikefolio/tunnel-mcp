@@ -96,11 +96,12 @@ it isn't already on your `PATH` — there's nothing extra to install.
 
 > "Open a tunnel to pair on debugging the checkout flow."
 
-Claude calls `tunnel_open({ goal })` and returns a join link. Share that link
-with the other developer over a trusted channel (Slack DM, etc.) — **it's a
-secret**, since it contains the encryption key for the session. The link is
-**single-use and expires after ~10 minutes** (`tunnel_open` reports
-`joinLinkExpiresInSec`), so share it promptly.
+Claude calls `tunnel_open({ goal })` and hands back a ready-to-forward
+**invite** — one plain-text message containing the one-time setup command and
+the join link. Paste it to the other developer over a trusted channel (Slack
+DM, etc.) — **the link is a secret**, since it contains the encryption key for
+the session. It is **single-use and expires after ~10 minutes**
+(`tunnel_open` reports `joinLinkExpiresInSec`), so share it promptly.
 
 **Guest** — paste the link and ask Claude to join:
 
