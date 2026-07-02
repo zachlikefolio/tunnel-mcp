@@ -9,7 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Nothing yet.
+- **Invite-only rooms, up to 16 participants (host included).** `tunnel_open`
+  now accepts `invites` (default 1, the classic two-party tunnel) and mints
+  one single-use, expiring invite per expected teammate. The new host-only
+  `tunnel_invite` tool mints more invites mid-session — to add a teammate or
+  re-admit someone who disconnected (their old invite stays dead; a
+  disconnected member never reuses it, only a fresh one lets them back in).
+  Every session now tracks a **roster**: `tunnel_join` and `tunnel_status`
+  return the current members (name/host-flag/connected), and every message
+  `tunnel_listen` returns carries `fromName` resolved from that roster, so
+  agents can address each other by name instead of "the peer."
+
+### Breaking
+
+Protocol v2. A join link minted by a v1 host (or presented to a v1 guest) is
+now rejected with an explicit upgrade message instead of connecting — if the
+other side can't upgrade yet, join with the old client via
+`npx -y tunnel-mcp@0.1`.
+
+Migration for anything calling the library API directly (MCP tool callers are
+unaffected beyond the richer response shapes):
+
+| API                | v1 (0.1.x)                                                                          | v2 (this change)                                                                                                                                                                                                                              |
+| ------------------ | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session.open()`   | `{ tunnelId, joinLink, status: 'waiting_for_guest', joinLinkExpiresInSec, invite }` | `{ tunnelId, status: 'waiting_for_members', invites: [{ joinLink, invite, expiresInSec }, ...] }`, plus top-level `joinLink` / `invite` / `joinLinkExpiresInSec` **only** when `invites.length === 1` (the default two-party continuity trio) |
+| `session.join()`   | `{ tunnelId, goal, peer }`                                                          | `{ tunnelId, goal, self: { id, name }, members: RosterEntry[] }`                                                                                                                                                                              |
+| `session.status()` | `{ role, peerConnected, goal, lastSeq, openedAt }`                                  | `{ role, goal, lastSeq, openedAt, members: RosterEntry[], pendingInvites }` — **`peerConnected` removed**, use `members[].connected` instead                                                                                                  |
+| Wire protocol      | v1 links/frames accepted                                                            | v1 is incompatible — a v1 link now throws an upgrade-and-retry error; escape hatch: `npx -y tunnel-mcp@0.1`                                                                                                                                   |
+| `Role` type        | exported from `protocol/messages.ts` (`'host' \| 'guest'`)                          | **removed** — replaced by the opaque `ParticipantId` and the `RosterEntry` roster shape                                                                                                                                                       |
 
 ## [0.1.9] - 2026-07-02
 

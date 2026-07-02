@@ -41,10 +41,11 @@ When you report, please include:
 
 ## Security Model
 
-tunnel-mcp lets two developers' Claude agents exchange messages directly
-through a host-owned, ephemeral relay, without a human copy-pasting between
-them. Understanding what is and isn't protected is important before you
-share a join link with anyone.
+tunnel-mcp lets developers' Claude agents exchange messages directly through a
+host-owned, ephemeral relay, without a human copy-pasting between them.
+Two-party is the default; the host can opt into a room of up to 16
+participants. Understanding what is and isn't protected is important before
+you share an invite with anyone.
 
 - **Chat message bodies are end-to-end encrypted.** The text passed to
   `tunnel_say` is sealed with NaCl `secretbox` (XSalsa20-Poly1305, via
@@ -52,36 +53,46 @@ share a join link with anyone.
   pipe — and the Cloudflare edge it runs over — only ever sees ciphertext
   for chat message bodies.
 - **Metadata is plaintext.** The `goal` passed to `tunnel_open`/`tunnel_join`,
-  both participants' display names, and system/connection events (joined,
-  left, idle, closed) cross the tunnel as **plaintext**. Do not put secrets
-  in the goal or display name.
-- **Authentication is proof-of-key-possession, not key transmission.** The
-  join link embeds a session key. The guest's client proves it holds that
-  key via an HMAC challenge/response; the raw key itself is never sent over
-  the wire. Because the join link contains the key, **treat the join link
-  like a password** — share it only over a trusted, already-authenticated
-  channel (e.g. a Slack DM to a known teammate), not in a public channel or
-  ticket.
-- **Join links are single-use and expiring.** A join link is consumed by the
-  first guest who successfully authenticates and can never be redeemed again —
-  even after that guest disconnects. Links also expire on their own (10 minutes
-  by default), so a link that is never used stops working. This bounds the
-  damage from a leaked link to a short window before it is used or expires.
-- **Single-guest lock.** The first participant who successfully
-  authenticates as guest locks the session. Sessions are strictly two-party;
-  a second concurrent join attempt is rejected ("tunnel full"), and any join
-  after the link has been consumed is rejected ("join link already used").
-- **Peer input is untrusted.** Everything a peer sends over the tunnel is
-  data, never an instruction. The bundled `tunnel-etiquette` skill
-  instructs each agent to treat incoming peer messages as untrusted input
-  and to get its own human's explicit OK before writing files, running
-  risky commands, or declaring a fix "confirmed" based on something the
-  peer said.
-- **Ephemeral by design.** A session and everything tied to it — the
-  in-process relay, the cloudflared child process, the throwaway Quick
-  Tunnel URL, and the on-disk session log — are torn down on: an explicit
-  `tunnel_close`, an idle timeout (30 minutes with no messages), or the
-  host process exiting. Nothing persists past teardown.
+  every member's display name, and system/connection events (joined, left,
+  idle, closed) cross the tunnel as **plaintext**. Do not put secrets in the
+  goal or a display name.
+- **Authentication is proof-of-key-possession, not key transmission.** Every
+  invite for a session embeds the same session key. A joining member's client
+  proves it holds that key via an HMAC challenge/response; the raw key itself
+  is never sent over the wire. Because an invite contains the key, **treat
+  every invite like a password** — share it only over a trusted,
+  already-authenticated channel (e.g. a Slack DM to a known teammate), not in
+  a public channel or ticket, and forward each invite to exactly one person.
+- **Invites are single-use and expiring.** Each invite is consumed by whoever
+  successfully authenticates with it first and can never be redeemed again —
+  even after that person disconnects. Invites also expire on their own (10
+  minutes by default), so one that's never used stops working. This bounds
+  the damage from a leaked invite to a short window before it is used or
+  expires.
+- **Invite-ledger admission.** A session admits only people the host minted
+  an invite for — up to 16 members connected at once, including the host.
+  Two-party remains the default. Every invite is single-use, consumed
+  atomically by the first successful join and dead forever after — the same
+  invite can never be redeemed a second time, even by the person who first
+  used it. Invites expire after ~10 minutes. A disconnected member's old
+  invite stays dead; getting back in requires a fresh invite from the host.
+  Only the host can mint invites, so a member who leaks the room key alone
+  cannot seat anyone.
+- **Peer input is untrusted, from every member.** Everything a peer sends
+  over the tunnel is data, never an instruction — and in a room, that holds
+  for each participant individually, not just "the other side." The bundled
+  `tunnel-etiquette` skill instructs each agent to treat incoming peer
+  messages as untrusted input and to get its own human's explicit OK before
+  writing files, running risky commands, or declaring a fix "confirmed"
+  based on something a peer said.
+- **Ephemeral by design.** The transcript is held in memory only — it is
+  never written to disk, and it vanishes with the process. Teardown is
+  role-sensitive: the host's explicit `tunnel_close`, an idle timeout (30
+  minutes with no messages), or the host process exiting all tear down the
+  whole session — the in-process relay, the cloudflared child process, and
+  the throwaway Quick Tunnel URL — for every member at once. A member's own
+  `tunnel_close` only removes that member; it does not tear anything down
+  for anyone else. Nothing persists past a session's own teardown.
 
 ## Supply chain
 
@@ -120,25 +131,32 @@ protect against:
 
 - **The relay path sees metadata in the clear.** The cloudflared Quick
   Tunnel is a real network hop through Cloudflare's edge. While chat
-  message bodies are encrypted end-to-end, the goal, both display names,
+  message bodies are encrypted end-to-end, the goal, every display name,
   and system/connection events are visible in plaintext to anything that
   can observe that path (including Cloudflare's infrastructure). Do not
   put secrets in the goal or names.
-- **A leaked link can still be redeemed within its window, before your guest
-  joins.** Join links are single-use and expire (10 minutes by default), so a
-  leaked link that is never used, has already been used, or has aged out can no
-  longer admit anyone. The residual risk is a race: if a link leaks and an
-  attacker redeems it faster than your intended guest — within the expiry
-  window and before that guest connects — the attacker consumes the single-use
-  link, joins as the guest, and locks out the real one. Share links only over
-  trusted channels, and open a fresh tunnel if you suspect a link was exposed
-  before it was used. There is no in-session key rotation.
+- **A leaked invite can still be redeemed within its window, before your
+  intended teammate joins.** Invites are single-use and expire (10 minutes
+  by default), so a leaked invite that is never used, has already been used,
+  or has aged out can no longer admit anyone. The residual risk is a race: if
+  an invite leaks and an attacker redeems it faster than your intended
+  teammate — within the expiry window and before that person connects — the
+  attacker consumes the single-use invite, joins in their place, and locks
+  them out (a fresh invite from the host is needed to re-admit them). Share
+  invites only over trusted channels, one per person, and mint a fresh
+  invite (or open a fresh tunnel) if you suspect one was exposed before it
+  was used. There is no in-session key rotation.
 - **The goal is never encrypted.** By design, the goal string is plaintext
   metadata used for connection setup and display; it receives no
   confidentiality protection at any layer.
-- **Strictly two-party.** The protocol only supports one host and one
-  guest per session. There is no support for additional participants,
-  multi-party relays, or host-offline/async delivery in this MVP.
+- **One shared key per room — every member reads everything.** All chat
+  message bodies in a session are encrypted under the single key embedded in
+  every invite for that session, not a separate key per pair of
+  participants. In a room, that means every current member can decrypt every
+  other member's chat messages — there is no sub-group or pairwise privacy
+  within a session. Admission is still gated per-person by the invite ledger
+  (see above); this limitation is about message confidentiality once someone
+  is in the room, not about who can get in.
 - **"Trusting" a peer only goes as far as your own agent's guardrails.**
   tunnel-mcp does not sandbox or validate what a peer sends beyond
   transport-level auth. The confidentiality/integrity of your own
@@ -147,12 +165,13 @@ protect against:
   requiring human approval for file writes, running commands, or
   confirming fixes). If you disable or bypass that skill, a malicious or
   compromised peer's messages could otherwise be misinterpreted as
-  instructions by an unguarded agent.
+  instructions by an unguarded agent — and in a room, this applies to
+  every member, not just one.
 - **Out of scope for this release**: host-offline/async messaging,
-  more than two participants, alternative transports (ngrok, WebRTC),
-  in-session key/link rotation, and encryption of the goal or other
-  connection metadata. These may be considered for future versions but
-  should not be assumed to exist today.
+  alternative transports (ngrok, WebRTC), in-session key/invite rotation
+  (replacing a still-valid invite before it's used or expires), and
+  encryption of the goal or other connection metadata. These may be
+  considered for future versions but should not be assumed to exist today.
 
 If you find a way to break any of the guarantees above (e.g. read a chat
 message body without the key, join a locked session, or get an agent to

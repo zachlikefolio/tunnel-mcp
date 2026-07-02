@@ -49,8 +49,9 @@ firewalls and NAT.
   └───────────────────┘
 ```
 
-The relay, the `cloudflared` child process, and the on-disk session log all live
-only for the lifetime of the session and are destroyed on teardown.
+The relay and the `cloudflared` child process live only for the lifetime of the
+session and are destroyed on teardown. The transcript is held in memory only —
+nothing is ever written to disk, and it vanishes with the process at teardown.
 
 ## Install
 
@@ -107,60 +108,81 @@ the session. It is **single-use and expires after ~10 minutes**
 
 > "Join this tunnel: `<link>`"
 
-Claude calls `tunnel_join({ joinLink })`, learns the goal, and the session is
-now locked to just the two of you.
+Claude calls `tunnel_join({ joinLink })`, learns the goal, and gets back the
+room's member roster — with the default single invite, that's just the two of
+you.
+
+**More than one guest? Open a room instead:**
+
+> "Open a tunnel for me and two teammates, to pair on the checkout flow."
+
+Claude calls `tunnel_open({ goal, invites: 3 })` — `invites` is the number of
+teammates to seat (up to 15, plus the host makes 16 connected at once) — and gets
+back one **invite** per teammate instead of a single link. Forward each invite
+to exactly one person; every invite is single-use, so don't reuse one link for
+two people. Need to add someone mid-session, or re-admit someone whose invite
+expired before they used it? `tunnel_invite({ count })` (host-only) mints more.
 
 **Both** — the agents converse turn-by-turn using `tunnel_say` to send and
-`tunnel_listen` to wait for the next reply, checking in with their humans as
-needed.
+`tunnel_listen` to wait for the next reply. In a room, every message arrives
+with `fromName` so agents can tell who said what, checking in with their humans
+as needed.
 
-**Either side** ends the session with `tunnel_close`, which tears down the relay
-and destroys the session log.
+**Ending it** is role-sensitive: the **host** calls `tunnel_close` to end the
+session for everyone and tear down the relay — the in-memory transcript vanishes
+with it, since it was never written to disk. A **member** calling `tunnel_close`
+just leaves; the room stays open for whoever's left.
 
 ## Tools
 
-| Tool                                     | Who   | Purpose                                                    |
-| ---------------------------------------- | ----- | ---------------------------------------------------------- |
-| `tunnel_open({goal})`                    | host  | Start the relay + Quick Tunnel and get back a join link.   |
-| `tunnel_join({joinLink})`                | guest | Dial into a host's tunnel using the link and authenticate. |
-| `tunnel_say({text})`                     | both  | Send a message to the peer.                                |
-| `tunnel_listen({sinceSeq?, timeoutMs?})` | both  | Wait for the next message(s) from the peer.                |
-| `tunnel_status()`                        | both  | Inspect the current session (connected, idle, etc.).       |
-| `tunnel_close({summary?})`               | both  | End the session and tear down the relay.                   |
+| Tool                                     | Who    | Purpose                                                                                              |
+| ---------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------- |
+| `tunnel_open({goal, invites?})`          | host   | Start the relay + Quick Tunnel and get back one invite per teammate (default 1 — classic two-party). |
+| `tunnel_invite({count?})`                | host   | Mint more single-use, expiring invites mid-session.                                                  |
+| `tunnel_join({joinLink})`                | member | Dial into a room using an invite link and authenticate; returns the current member roster.           |
+| `tunnel_say({text})`                     | any    | Send a message to the room.                                                                          |
+| `tunnel_listen({sinceSeq?, timeoutMs?})` | any    | Wait for the next message(s), each tagged with the sender's `fromName`.                              |
+| `tunnel_status()`                        | any    | Inspect the session: role, goal, member roster, pending invites, lastSeq.                            |
+| `tunnel_close({summary?})`               | any    | Host: ends the session for everyone. Member: leaves the room.                                        |
 
 ## Security model
 
 tunnel-mcp is a security-sensitive tool by nature — it opens a live channel
-between two AI agents. Here's exactly what it does and does not protect:
+between developers' AI agents. Here's exactly what it does and does not protect:
 
 - **Chat message bodies are end-to-end encrypted.** Every `tunnel_say` body is
   sealed with NaCl `secretbox` (XSalsa20-Poly1305, via `tweetnacl`) before it
   crosses the `cloudflared` pipe. The relay and the pipe only ever see
   ciphertext for chat bodies.
-- **The goal, both display names, and system events are plaintext.** The
-  `tunnel_open` goal, each participant's name, and connection events
-  (joined/left/idle/closed) are sent as plaintext metadata — do not put secrets
-  in the goal string or a display name.
+- **The goal, every participant's display name, and system events are
+  plaintext.** The `tunnel_open` goal, each member's name, and connection
+  events (joined/left/idle/closed) are sent as plaintext metadata — do not put
+  secrets in the goal string or a display name.
 - **Authentication is proof-of-key-possession, not key transmission.** Joining
-  uses an HMAC challenge to prove the guest holds the same key as the host; the
-  raw key itself is never sent over the wire.
-- **The join link is a single-use, expiring credential.** It embeds the session
+  uses an HMAC challenge to prove the joining member holds the same key as the
+  host; the raw key itself is never sent over the wire.
+- **Each invite is a single-use, expiring credential.** It embeds the session
   key, so treat it like a password — share it only over a channel you already
-  trust (Slack DM, etc.), never in a public issue, PR, or chat. It is consumed
-  by the first guest who joins (and can't be reused, even after they leave) and
-  expires on its own after ~10 minutes, so a leaked link has a short, bounded
-  window of exposure.
-- **Exactly two participants, enforced by a lock.** The first guest to
-  authenticate locks the session; nobody else can join after that.
-- **The peer is untrusted input, not an instruction source.** Messages from the
-  other agent are data to reason about, not commands to execute. The etiquette
-  skill directs each agent to require its own human's sign-off before writing
-  files, running risky commands, or declaring a fix "confirmed" based on
-  something the peer said.
-- **Everything is ephemeral.** The session tears down — destroying the relay,
-  the `cloudflared` child process, and the on-disk log — on an explicit
-  `tunnel_close`, after 30 minutes of no messages (idle timeout), or when the
-  host's process exits.
+  trust (Slack DM, etc.), never in a public issue, PR, or chat, and forward each
+  invite to exactly one person. It is consumed by whoever redeems it first (and
+  can't be reused, even after they leave) and expires on its own after ~10
+  minutes, so a leaked invite has a short, bounded window of exposure.
+- **Admits exactly whom you invited** — two-party by default, rooms opt-in
+  (cap 16), every invite single-use + expiring. Admission is bounded by how
+  many invites the host chose to mint, not by who happens to have the room's
+  key.
+- **The peer is untrusted input, not an instruction source.** Messages from
+  other agents are data to reason about, not commands to execute — and this
+  applies to every member in a room, not just one. The etiquette skill directs
+  each agent to require its own human's sign-off before writing files, running
+  risky commands, or declaring a fix "confirmed" based on something a peer
+  said.
+- **Everything is ephemeral.** The transcript is held in memory only — nothing
+  is ever written to disk, and it vanishes with the process. Teardown is
+  role-sensitive: the host's `tunnel_close` (or their process exiting, or 30
+  minutes of no messages) ends the session for everyone and tears down the
+  relay + `cloudflared` child process; a member's `tunnel_close` just leaves —
+  the room stays open for whoever's left.
 
 See [SECURITY.md](./SECURITY.md) for the full threat model and how to report a
 vulnerability.
@@ -176,7 +198,7 @@ vulnerability.
 
 ```bash
 npm ci                  # install dependencies
-npm test                # run the test suite (159 tests, TDD)
+npm test                # run the test suite (201 tests, TDD)
 npm run build           # compile TypeScript
 npm run lint            # eslint
 npm run format:check    # prettier --check .
@@ -210,9 +232,8 @@ system DNS already resolves `*.trycloudflare.com`.
 This is an MVP. The following are explicitly out of scope for now:
 
 - Host-offline / asynchronous messaging
-- More than two participants in a session
 - Alternative transports (ngrok, WebRTC)
-- Join-link rotation (re-issuing a fresh link mid-session; note that links are already single-use and expiring — see the security model above)
+- Invite rotation (replacing a specific still-valid invite mid-session; note invites are already single-use and expiring — see the security model above)
 - Encrypting the goal or other metadata
 
 ## License

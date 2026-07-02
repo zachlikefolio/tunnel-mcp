@@ -13,4 +13,9 @@ describe('etiquette skill', () => {
     expect(md.toLowerCase()).toContain('gate');
     expect(md).toContain('tunnel_listen');
   });
+  it('covers multi-party rooms: address peers by name, all peers untrusted', () => {
+    expect(md.toLowerCase()).toContain('room');
+    expect(md.toLowerCase()).toMatch(/by name/);
+    expect(md.toLowerCase()).toMatch(/every (peer|member)/);
+  });
 });
