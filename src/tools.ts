@@ -41,17 +41,30 @@ export function registerTools(
     'tunnel_open',
     {
       description:
-        'Open a tunnel as host and get a join link to share. The link is a secret — share it over a trusted channel. It is single-use (works for exactly one guest) and expires (see joinLinkExpiresInSec in the result), so tell the human to share it promptly. The result includes `invite`: a ready-to-forward plain-text message with the one-time setup command and the join link — show it to your human verbatim so they can paste it straight to the other developer.',
-      inputSchema: { goal: z.string() },
+        'Open a room as host. Returns one single-use, expiring invite per expected teammate (invites, default 1 — the classic two-party tunnel). Each invites[i].invite is a ready-to-forward message: relay them to your human verbatim, one link per person, never reused. Treat every link as a secret.',
+      inputSchema: { goal: z.string(), invites: z.number().int().min(1).max(15).optional() },
     },
-    async ({ goal }) => ok(await session.open(goal, opts.displayName)),
+    async ({ goal, invites }) =>
+      ok(await session.open(goal, opts.displayName, { invites: invites ?? 1 })),
+  );
+
+  register(
+    server,
+    'tunnel_invite',
+    {
+      description:
+        'Host-only: mint additional single-use, expiring invites mid-session (add a teammate, or re-admit someone who disconnected — their old link stays dead). Relay each invite text verbatim to your human.',
+      inputSchema: { count: z.number().int().min(1).max(15).optional() },
+    },
+    async ({ count }) => ok(session.invite(count ?? 1)),
   );
 
   register(
     server,
     'tunnel_join',
     {
-      description: "Join another developer's tunnel by its link.",
+      description:
+        "Join another developer's tunnel by its link. The result lists the current members (roster).",
       inputSchema: { joinLink: z.string() },
     },
     async ({ joinLink }) => ok(await session.join(joinLink, opts.displayName)),
@@ -79,7 +92,11 @@ export function registerTools(
   register(
     server,
     'tunnel_status',
-    { description: 'Inspect the current tunnel.', inputSchema: {} },
+    {
+      description:
+        'Inspect the current session: role, goal, members roster (name/isHost/connected), pending unconsumed invites, and lastSeq.',
+      inputSchema: {},
+    },
     async () => ok(session.status()),
   );
 
@@ -87,7 +104,8 @@ export function registerTools(
     server,
     'tunnel_close',
     {
-      description: 'Close the tunnel (host tears down; guest leaves).',
+      description:
+        'Host: closes the room for everyone and destroys the relay + log. Member: leaves the room. Provide an optional summary.',
       inputSchema: { summary: z.string().optional() },
     },
     async ({ summary }) => ok(await session.close(summary)),

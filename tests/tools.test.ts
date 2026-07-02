@@ -18,12 +18,13 @@ function fakeServer() {
 }
 
 describe('registerTools', () => {
-  it('registers all six tunnel tools', () => {
+  it('registers all seven tunnel tools', () => {
     const server = fakeServer();
     registerTools(server, new TunnelSession(), { displayName: 'alice' });
     expect(Object.keys(server.tools).sort()).toEqual(
       [
         'tunnel_close',
+        'tunnel_invite',
         'tunnel_join',
         'tunnel_listen',
         'tunnel_open',
@@ -45,8 +46,32 @@ describe('registerTools', () => {
     registerTools(server, session, { displayName: 'alice' });
 
     const res = await server.tools['tunnel_open']({ goal: 'fix it' });
-    expect(session.open).toHaveBeenCalledWith('fix it', 'alice');
+    expect(session.open).toHaveBeenCalledWith('fix it', 'alice', { invites: 1 });
     expect(res.content[0].text).toContain('wss://x/t/id1#k');
+  });
+
+  it('tunnel_open forwards invites and returns the JSON payload', async () => {
+    const server = fakeServer();
+    const session = new TunnelSession();
+    const openResult = { tunnelId: 't', status: 'waiting_for_members', invites: [] };
+    vi.spyOn(session, 'open').mockResolvedValue(openResult as any);
+    registerTools(server, session, { displayName: 'alice' });
+
+    const res = await server.tools['tunnel_open']({ goal: 'g', invites: 3 });
+    expect(session.open).toHaveBeenCalledWith('g', 'alice', { invites: 3 });
+    expect(res.content[0].text).toBe(JSON.stringify(openResult));
+  });
+
+  it('tunnel_invite calls session.invite with the count', async () => {
+    const server = fakeServer();
+    const session = new TunnelSession();
+    const minted = [{ joinLink: 'wss://x#k.t', expiresInSec: 600, invite: 'txt' }];
+    vi.spyOn(session, 'invite').mockReturnValue(minted as any);
+    registerTools(server, session, { displayName: 'alice' });
+
+    const res = await server.tools['tunnel_invite']({ count: 2 });
+    expect(session.invite).toHaveBeenCalledWith(2);
+    expect(res.content[0].text).toBe(JSON.stringify(minted));
   });
 
   it('tunnel_join delegates joinLink and displayName to session.join', async () => {
