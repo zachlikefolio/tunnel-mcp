@@ -2,12 +2,23 @@ import crypto from 'node:crypto';
 import { Key, seal, open } from './crypto.js';
 
 export type MessageKind = 'chat' | 'system' | 'presence';
+
+/** @deprecated v1 protocol role — removed in Task 4's flip; use ParticipantId. */
 export type Role = 'host' | 'guest';
+
+export type ParticipantId = string; // 8 random bytes, hex (16 chars)
+
+export interface RosterEntry {
+  id: ParticipantId;
+  name: string;
+  isHost: boolean;
+  connected: boolean;
+}
 
 export interface WireMessage {
   id: string;
   seq: number; // -1 until the host relay assigns it
-  from: Role;
+  from: ParticipantId;
   kind: MessageKind;
   body: string; // chat: ciphertext; system/presence: plaintext
   ts: number; // 0 until the host relay assigns it
@@ -16,7 +27,8 @@ export interface WireMessage {
 export interface PlainMessage {
   id: string;
   seq: number;
-  from: Role;
+  from: ParticipantId;
+  fromName?: string; // resolved from the roster at delivery (session.listen)
   kind: MessageKind;
   text: string;
   ts: number;
@@ -26,11 +38,15 @@ export function newId(): string {
   return crypto.randomBytes(8).toString('hex');
 }
 
-export function buildChat(from: Role, text: string, key: Key): WireMessage {
+export function newParticipantId(): ParticipantId {
+  return crypto.randomBytes(8).toString('hex');
+}
+
+export function buildChat(from: ParticipantId, text: string, key: Key): WireMessage {
   return { id: newId(), seq: -1, from, kind: 'chat', body: seal(text, key), ts: 0 };
 }
 
-export function buildSystem(from: Role, text: string): WireMessage {
+export function buildSystem(from: ParticipantId, text: string): WireMessage {
   return { id: newId(), seq: -1, from, kind: 'system', body: text, ts: 0 };
 }
 

@@ -19,6 +19,8 @@ import {
   GUEST_SYS_LOOKUP_TIMEOUT_MS,
   DOH_GUEST_RETRIES,
   DOH_GUEST_RETRY_DELAY_MS,
+  MAX_ROOM_MEMBERS,
+  PROTOCOL_VERSION,
 } from '../src/config.js';
 
 describe('config', () => {
@@ -87,11 +89,18 @@ describe('config', () => {
       GUEST_SYS_LOOKUP_TIMEOUT_MS,
       DOH_GUEST_RETRIES,
       DOH_GUEST_RETRY_DELAY_MS,
+      MAX_ROOM_MEMBERS,
+      PROTOCOL_VERSION,
     ];
     for (const value of numericConstants) {
       expect(typeof value).toBe('number');
       expect(Number.isInteger(value)).toBe(true);
       expect(value).toBeGreaterThan(0);
     }
+  });
+
+  it('exposes room constants', () => {
+    expect(MAX_ROOM_MEMBERS).toBe(16);
+    expect(PROTOCOL_VERSION).toBe(2);
   });
 });

@@ -8,6 +8,7 @@ import {
   makeChallenge,
   respondChallenge,
   verifyChallenge,
+  generateToken,
 } from '../src/protocol/crypto.js';
 
 describe('crypto', () => {
@@ -98,5 +99,15 @@ describe('crypto', () => {
     const a = makeChallenge();
     const b = makeChallenge();
     expect(a).not.toBe(b);
+  });
+});
+
+describe('generateToken', () => {
+  it('returns 16 random bytes as base64url, unique per call', () => {
+    const t1 = generateToken();
+    const t2 = generateToken();
+    expect(t1).not.toBe(t2);
+    expect(Buffer.from(t1, 'base64url').length).toBe(16);
+    expect(t1).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 });

@@ -45,3 +45,9 @@ export function verifyChallenge(challenge: string, response: string, key: Key): 
   const got = Buffer.from(response);
   return expected.length === got.length && crypto.timingSafeEqual(expected, got);
 }
+
+// One-time invite token: 16 random bytes, base64url. High-entropy bearer value
+// redeemed exactly once by the host's invite ledger.
+export function generateToken(): string {
+  return crypto.randomBytes(16).toString('base64url');
+}

@@ -53,3 +53,7 @@ export const GUEST_CONNECT_DEADLINE_MS = 20_000; // overall connect+auth deadlin
 export const GUEST_SYS_LOOKUP_TIMEOUT_MS = 2_000; // bound the system-first lookup before DoH fallback
 export const DOH_GUEST_RETRIES = 3; // DoH attempts in the guest fallback
 export const DOH_GUEST_RETRY_DELAY_MS = 700; // backoff between guest DoH attempts
+
+// Rooms
+export const MAX_ROOM_MEMBERS = 16; // includes the host → at most 15 ws members
+export const PROTOCOL_VERSION = 2;

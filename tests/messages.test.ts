@@ -9,6 +9,7 @@ import {
   newId,
   ControlFrame,
   WireMessage,
+  newParticipantId,
 } from '../src/protocol/messages.js';
 
 describe('messages', () => {
@@ -85,6 +86,21 @@ describe('messages', () => {
     expect(result.kind).toBe('presence');
     expect(result.seq).toBe(3);
     expect(result.ts).toBe(123);
+  });
+
+  describe('participant ids', () => {
+    it('newParticipantId returns 8 random bytes hex, unique per call', () => {
+      const a = newParticipantId();
+      expect(a).toMatch(/^[0-9a-f]{16}$/);
+      expect(newParticipantId()).not.toBe(a);
+    });
+    it('WireMessage.from accepts a participant id and decrypt passes it through', () => {
+      const key = generateKey();
+      const id = newParticipantId();
+      const m = buildChat(id, 'hi', key);
+      expect(m.from).toBe(id);
+      expect(decrypt(m, key).from).toBe(id);
+    });
   });
 
   describe('control frame round-trip', () => {
