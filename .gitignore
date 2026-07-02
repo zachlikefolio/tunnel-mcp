@@ -2,3 +2,11 @@ node_modules/
 dist/
 coverage/
 docs/superpowers/
+
+# Demo/promo working artifacts (recordings, cuts, post drafts). The final
+# docs/demo.gif embedded in the README is intentionally NOT ignored.
+*.cast
+/*.gif
+/*.mp4
+/*.mov
+drafts/
