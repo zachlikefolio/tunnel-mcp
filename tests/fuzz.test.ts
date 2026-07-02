@@ -3,7 +3,7 @@ import fc from 'fast-check';
 import { decodeFrame, decrypt } from '../src/protocol/messages.js';
 import type { WireMessage } from '../src/protocol/messages.js';
 import { parseLink, mintLink, generateTunnelId } from '../src/protocol/link.js';
-import { generateKey, keyToBase64url } from '../src/protocol/crypto.js';
+import { generateKey, keyToBase64url, generateToken } from '../src/protocol/crypto.js';
 
 // Property-based fuzzing of the three decoders that consume UNTRUSTED input: a
 // peer's chat ciphertext (decrypt), a relay control frame (decodeFrame), and a
@@ -91,6 +91,24 @@ describe('fuzz: untrusted-input decoders', () => {
         return (
           l.key.length === 32 && /^[0-9a-f]+$/.test(l.tunnelId) && l.wsUrl.startsWith('wss://')
         );
+      }),
+      { numRuns: 500 },
+    );
+
+    // v2 valid-link generator asserting the success path with tokens
+    const validInvite = fc
+      .tuple(
+        fc.domain(),
+        fc.uint8Array({ minLength: 1, maxLength: 12 }).map((b) => Buffer.from(b).toString('hex')),
+      )
+      .map(
+        ([host, tid]) =>
+          `wss://${host}/t/${tid}#${keyToBase64url(generateKey())}.${generateToken()}`,
+      );
+    fc.assert(
+      fc.property(validInvite, (s) => {
+        const l = parseLink(s);
+        return l.key.length === 32 && typeof l.token === 'string' && l.token.length > 0;
       }),
       { numRuns: 500 },
     );

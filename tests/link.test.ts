@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { generateKey, keyToBase64url } from '../src/protocol/crypto.js';
-import { generateTunnelId, mintLink, parseLink } from '../src/protocol/link.js';
+import { generateKey, keyToBase64url, generateToken } from '../src/protocol/crypto.js';
+import { generateTunnelId, mintLink, parseLink, mintInvite } from '../src/protocol/link.js';
 
 describe('link', () => {
   it('mints an https base into a wss link and parses it back', () => {
@@ -88,5 +88,27 @@ describe('link', () => {
     expect(parsed.tunnelId).toBe(id);
     expect(parsed.key).toEqual(key);
     expect(parsed.wsUrl).toBe(`wss://foo.bar.baz.example.com:9443/t/${id}`);
+  });
+});
+
+describe('v2 invite links', () => {
+  it('mintInvite embeds key and token dot-separated in the fragment; parseLink round-trips both', () => {
+    const key = generateKey();
+    const token = generateToken();
+    const link = mintInvite('https://x.trycloudflare.com', 'abc123', key, token);
+    expect(link).toBe(`wss://x.trycloudflare.com/t/abc123#${keyToBase64url(key)}.${token}`);
+    const parsed = parseLink(link);
+    expect(parsed.tunnelId).toBe('abc123');
+    expect(parsed.token).toBe(token);
+    expect(keyToBase64url(parsed.key)).toBe(keyToBase64url(key));
+  });
+  it('parseLink still accepts a v1 (tokenless) link for now, with token undefined', () => {
+    const key = generateKey();
+    const parsed = parseLink(mintLink('https://x.io', 'abc', key));
+    expect(parsed.token).toBeUndefined();
+  });
+  it('rejects a fragment with more than one dot', () => {
+    const key = generateKey();
+    expect(() => parseLink(`wss://x.io/t/abc#${keyToBase64url(key)}.tok.extra`)).toThrow();
   });
 });
