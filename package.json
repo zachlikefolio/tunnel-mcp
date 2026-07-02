@@ -32,6 +32,7 @@
     "dev": "tsx src/index.ts",
     "e2e": "tsx scripts/e2e-two-agents.ts",
     "demo": "tsx scripts/demo.ts",
+    "smoke:room": "tsx scripts/room-smoke.ts",
     "postinstall": "node postinstall.mjs",
     "prepublishOnly": "npm run build"
   },
