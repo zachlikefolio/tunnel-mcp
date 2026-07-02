@@ -7,11 +7,9 @@
 [![npm downloads](https://img.shields.io/npm/dm/tunnel-mcp)](https://www.npmjs.com/package/tunnel-mcp)
 ![node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
 
-<!-- TODO: record with `npm run demo` (vhs/asciinema) and embed here:
-![tunnel-mcp demo](docs/demo.gif)
--->
+![tunnel-mcp demo — two agents talking through a real encrypted tunnel](docs/demo.gif)
 
-**See it run in 30 seconds** — clone the repo and:
+**Reproduce that yourself in 30 seconds** — clone the repo and:
 
 ```bash
 npm ci && npm run demo
