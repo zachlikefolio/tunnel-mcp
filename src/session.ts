@@ -38,6 +38,7 @@ export interface SessionDeps {
   startCloudflared: (bin: string, port: number) => Promise<TunnelHandle>;
   idleMs?: number;
   joinTtlMs?: number;
+  artifactTtlMs?: number;
 }
 
 export type SessionRole = 'host' | 'member';
@@ -111,7 +112,10 @@ export class TunnelSession {
     const idleMs = this.deps.idleMs ?? DEFAULT_IDLE_TEARDOWN_MS;
     const joinTtlMs = this.deps.joinTtlMs ?? DEFAULT_JOIN_LINK_TTL_MS;
     const log = new SessionLog(tunnelId);
-    const relay = new HostRelay({ tunnelId, key, goal, hostName, idleMs, joinTtlMs }, log);
+    const relay = new HostRelay(
+      { tunnelId, key, goal, hostName, idleMs, joinTtlMs, artifactTtlMs: this.deps.artifactTtlMs },
+      log,
+    );
     const port = await relay.start();
 
     // Bounded retry: cloudflared may crash or never yield a URL; re-spawn before giving up.

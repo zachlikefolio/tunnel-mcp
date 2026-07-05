@@ -128,4 +128,42 @@ describe('artifact sharing integration (share half)', () => {
       /no such artifact offered/,
     );
   });
+
+  it('rejects an over-cap share before uploading', async () => {
+    const fs = await import('node:fs/promises');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const host = new TunnelSession(fakeDeps());
+    sessions.push(host);
+    await host.open('cap room', 'Host');
+
+    // One byte over the 10MB per-file cap. session.share reads the file, sees the
+    // size, and throws BEFORE any chunking/upload.
+    const big = path.join(os.tmpdir(), `tunnel-big-${Date.now()}`);
+    await fs.writeFile(big, Buffer.alloc(10 * 1024 * 1024 + 1, 1));
+    await expect(host.share(big)).rejects.toThrow(/per-file limit/);
+    await fs.rm(big, { force: true });
+  }, 20000);
+
+  it('a fetch after TTL eviction errors cleanly (artifactTtlMs via deps)', async () => {
+    // Use a host relay with a tiny artifact TTL so the offer outlives the bytes.
+    const fs = await import('node:fs/promises');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const host = new TunnelSession({ ...fakeDeps(), artifactTtlMs: 30 } as any);
+    const ana = new TunnelSession();
+    sessions.push(host, ana);
+    const opened = await host.open('ttl room', 'Host', { invites: 1 });
+    await ana.join(opened.invites[0].joinLink, 'Ana');
+
+    const src = path.join(os.tmpdir(), `tunnel-ttl-${Date.now()}`);
+    await fs.writeFile(src, 'evict me');
+    const shared = await host.share(src);
+    await waitFor(ana, (m) => m.some((x) => x.kind === 'artifact'));
+    await new Promise((r) => setTimeout(r, 60)); // let the 30ms TTL lapse
+    await expect(ana.receive(shared.artifactId, path.join(os.tmpdir(), 'out'))).rejects.toThrow(
+      /artifact expired or not found/,
+    );
+    await fs.rm(src, { force: true });
+  }, 20000);
 });
