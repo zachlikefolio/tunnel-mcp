@@ -49,16 +49,26 @@ async function waitForArtifactOffer(
   const stop = Date.now() + deadlineMs;
   while (Date.now() < stop) {
     const { messages } = await session.listen(sinceSeq.v, Math.max(200, stop - Date.now()));
-    for (const m of messages) sinceSeq.v = Math.max(sinceSeq.v, m.seq);
-    const hit = messages.find((m) => {
-      if (m.kind !== 'artifact') return false;
-      try {
-        return (JSON.parse(m.text) as { id?: string }).id === artifactId;
-      } catch {
-        return false;
+    for (const m of messages) {
+      let isHit = false;
+      if (m.kind === 'artifact') {
+        try {
+          isHit = (JSON.parse(m.text) as { id?: string }).id === artifactId;
+        } catch {
+          isHit = false;
+        }
       }
-    });
-    if (hit) return hit;
+      if (isHit) {
+        // Consume the cursor only up to THIS offer. Real-network latency can
+        // batch two artifact offers into one listen() response; advancing to the
+        // batch max here would skip a later offer in the same batch, so the next
+        // waitForArtifactOffer() would never see it. Stop at the matched seq and
+        // let the next call re-scan from here.
+        sinceSeq.v = m.seq;
+        return m;
+      }
+      sinceSeq.v = Math.max(sinceSeq.v, m.seq);
+    }
   }
   return undefined;
 }
