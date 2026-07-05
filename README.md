@@ -141,8 +141,9 @@ ciphertext. The offer shows up for teammates as an `artifact` message in
 sender). A teammate who wants it calls `tunnel_receive({ artifactId, savePath })`
 with a path **they** choose — the bytes are decrypted and checked against the
 sender's sha256 before anything is written, and a mismatch is refused rather
-than saved. This is single-use per fetch (each `tunnel_receive` call re-fetches
-and re-verifies) and members on an older client are silently skipped
+than saved. An artifact stays fetchable by any current member until it expires
+(a 30-minute TTL) or the session ends — each `tunnel_receive` call independently
+re-fetches and re-verifies. Members on an older client are silently skipped
 (`olderMembers` in the `tunnel_share` result) — they simply never see the
 offer. Filenames cross as plaintext metadata, so don't put secrets in one, and
 treat every received file as untrusted input — see the etiquette skill.
@@ -222,7 +223,7 @@ vulnerability.
 
 ```bash
 npm ci                  # install dependencies
-npm test                # run the test suite (198 tests, TDD)
+npm test                # run the test suite (248 tests, TDD)
 npm run build           # compile TypeScript
 npm run lint            # eslint
 npm run format:check    # prettier --check .
