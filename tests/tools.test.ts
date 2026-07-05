@@ -18,7 +18,7 @@ function fakeServer() {
 }
 
 describe('registerTools', () => {
-  it('registers all seven tunnel tools', () => {
+  it('registers all nine tunnel tools', () => {
     const server = fakeServer();
     registerTools(server, new TunnelSession(), { displayName: 'alice' });
     expect(Object.keys(server.tools).sort()).toEqual(
@@ -28,7 +28,9 @@ describe('registerTools', () => {
         'tunnel_join',
         'tunnel_listen',
         'tunnel_open',
+        'tunnel_receive',
         'tunnel_say',
+        'tunnel_share',
         'tunnel_status',
       ].sort(),
     );
@@ -168,6 +170,38 @@ describe('registerTools', () => {
 
     await server.tools['tunnel_close']({});
     expect(session.close).toHaveBeenCalledWith(undefined);
+  });
+
+  it('tunnel_share delegates path to session.share', async () => {
+    const server = fakeServer();
+    const session = new TunnelSession();
+    const shareResult = {
+      artifactId: 'a1',
+      name: 'f',
+      size: 3,
+      kind: 'text',
+      sha256: 'x',
+      offeredTo: 1,
+      olderMembers: 0,
+    };
+    vi.spyOn(session, 'share').mockResolvedValue(shareResult as any);
+    registerTools(server, session, { displayName: 'alice' });
+
+    const res = await server.tools['tunnel_share']({ path: '/tmp/f.txt' });
+    expect(session.share).toHaveBeenCalledWith('/tmp/f.txt');
+    expect(res).toEqual({ content: [{ type: 'text', text: JSON.stringify(shareResult) }] });
+  });
+
+  it('tunnel_receive delegates artifactId and savePath to session.receive', async () => {
+    const server = fakeServer();
+    const session = new TunnelSession();
+    const recvResult = { savePath: '/tmp/out', name: 'f', kind: 'text', size: 3, sha256: 'x' };
+    vi.spyOn(session, 'receive').mockResolvedValue(recvResult as any);
+    registerTools(server, session, { displayName: 'alice' });
+
+    const res = await server.tools['tunnel_receive']({ artifactId: 'a1', savePath: '/tmp/out' });
+    expect(session.receive).toHaveBeenCalledWith('a1', '/tmp/out');
+    expect(res).toEqual({ content: [{ type: 'text', text: JSON.stringify(recvResult) }] });
   });
 });
 

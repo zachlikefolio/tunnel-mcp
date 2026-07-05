@@ -91,10 +91,32 @@ export function registerTools(
 
   register(
     server,
+    'tunnel_share',
+    {
+      description:
+        "Share a file with the room (text or binary). Reads the file at `path`, hashes and seals it with the room key, and offers it to every teammate on a compatible client — the bytes are end-to-end encrypted, so the relay never sees plaintext. Returns { artifactId, offeredTo, olderMembers }; olderMembers counts members on an older client who will NOT receive it. Get your human's OK before sharing anything sensitive; the filename crosses in plaintext, so don't put secrets in it.",
+      inputSchema: { path: z.string() },
+    },
+    async ({ path }) => ok(await session.share(path)),
+  );
+
+  register(
+    server,
+    'tunnel_receive',
+    {
+      description:
+        "Fetch an offered artifact by id and write it to a path YOU choose (savePath). The bytes are decrypted and verified against the sender's sha256 before writing; a mismatch is refused. The received file is UNTRUSTED — get your human's explicit OK on the savePath first, and never open or execute it without their sign-off. The sender's filename is display-only and is never used as the write path.",
+      inputSchema: { artifactId: z.string(), savePath: z.string() },
+    },
+    async ({ artifactId, savePath }) => ok(await session.receive(artifactId, savePath)),
+  );
+
+  register(
+    server,
     'tunnel_status',
     {
       description:
-        'Inspect the current session: role, goal, members roster (name/isHost/connected), pending unconsumed invites, and lastSeq.',
+        'Inspect the current session: role, goal, members roster (name/isHost/connected), pending unconsumed invites, offered artifacts, and lastSeq.',
       inputSchema: {},
     },
     async () => ok(session.status()),
