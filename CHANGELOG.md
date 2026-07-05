@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **File & artifact sharing.** New `tunnel_share({path})` and
+  `tunnel_receive({artifactId, savePath})` tools let any member send a text
+  or binary file to the room. Bytes are chunked and end-to-end encrypted with
+  the same room key/`secretbox` construction as chat, with a plaintext
+  sha256 of the whole file that `tunnel_receive` verifies after
+  decrypt-and-reassemble, before writing anything (a mismatch is refused,
+  never saved). Offers surface as a new `artifact` message kind in
+  `tunnel_listen` and in `tunnel_status().artifacts`. Sharing is
+  announce-then-fetch and single-fetch-per-call: `tunnel_share` seals and
+  stores the file once; each `tunnel_receive` call independently re-fetches
+  and re-verifies. Caps: 10 MB per file, 20 MB outstanding per member, 64 MB
+  per room, with a 30-minute TTL per artifact (or session end, whichever is
+  first).
+
+### Security
+
+- **Fixed a remote DoS in the artifact relay.** `ArtifactStore.begin()` used
+  to allocate a `chunks` array sized directly from a `share_begin` frame's
+  attacker-controlled `chunkCount`, so a malicious/buggy client could pass a
+  huge `chunkCount` and crash the relay via an unbounded allocation
+  (reproduced as a V8 OOM abort). `chunkCount` is now bounded to be `<= size`
+  (a well-formed chunker never emits more chunks than plaintext bytes) and
+  rejected otherwise.
+
+### Changed / Protocol
+
+- **`PROTOCOL_VERSION` 2 → 3, additive and backward-tolerant.** A v3 host
+  still admits v2 members — they simply never receive artifact messages
+  (live or from backlog), since artifact delivery is gated on a separate,
+  fixed `ARTIFACT_PROTOCOL_VERSION` floor. New artifact wire frames
+  (`share_begin`/`share_chunk`/`share_end`, `fetch`/`fetch_chunk`, artifact
+  `error` codes) are purely additive to the v2 frame set. v1 (tokenless)
+  links/clients remain rejected, unchanged from the v2 release.
+
 ## [0.2.0] - 2026-07-02
 
 ### Added

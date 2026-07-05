@@ -133,17 +133,33 @@ session for everyone and tear down the relay — the in-memory transcript vanish
 with it, since it was never written to disk. A **member** calling `tunnel_close`
 just leaves; the room stays open for whoever's left.
 
+**Sharing files:** any member can call `tunnel_share({ path })` to send a text
+or binary file to the room — it's read from disk, hashed, and sealed with the
+room key before it ever crosses the tunnel, so the relay only ever sees
+ciphertext. The offer shows up for teammates as an `artifact` message in
+`tunnel_listen` and in `tunnel_status().artifacts` (id, name, kind, size,
+sender). A teammate who wants it calls `tunnel_receive({ artifactId, savePath })`
+with a path **they** choose — the bytes are decrypted and checked against the
+sender's sha256 before anything is written, and a mismatch is refused rather
+than saved. This is single-use per fetch (each `tunnel_receive` call re-fetches
+and re-verifies) and members on an older client are silently skipped
+(`olderMembers` in the `tunnel_share` result) — they simply never see the
+offer. Filenames cross as plaintext metadata, so don't put secrets in one, and
+treat every received file as untrusted input — see the etiquette skill.
+
 ## Tools
 
-| Tool                                     | Who    | Purpose                                                                                              |
-| ---------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------- |
-| `tunnel_open({goal, invites?})`          | host   | Start the relay + Quick Tunnel and get back one invite per teammate (default 1 — classic two-party). |
-| `tunnel_invite({count?})`                | host   | Mint more single-use, expiring invites mid-session.                                                  |
-| `tunnel_join({joinLink})`                | member | Dial into a room using an invite link and authenticate; returns the current member roster.           |
-| `tunnel_say({text})`                     | any    | Send a message to the room.                                                                          |
-| `tunnel_listen({sinceSeq?, timeoutMs?})` | any    | Wait for the next message(s), each tagged with the sender's `fromName`.                              |
-| `tunnel_status()`                        | any    | Inspect the session: role, goal, member roster, pending invites, lastSeq.                            |
-| `tunnel_close({summary?})`               | any    | Host: ends the session for everyone. Member: leaves the room.                                        |
+| Tool                                     | Who    | Purpose                                                                                                             |
+| ---------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------- |
+| `tunnel_open({goal, invites?})`          | host   | Start the relay + Quick Tunnel and get back one invite per teammate (default 1 — classic two-party).                |
+| `tunnel_invite({count?})`                | host   | Mint more single-use, expiring invites mid-session.                                                                 |
+| `tunnel_join({joinLink})`                | member | Dial into a room using an invite link and authenticate; returns the current member roster.                          |
+| `tunnel_say({text})`                     | any    | Send a message to the room.                                                                                         |
+| `tunnel_listen({sinceSeq?, timeoutMs?})` | any    | Wait for the next message(s), each tagged with the sender's `fromName`.                                             |
+| `tunnel_share({path})`                   | any    | Share a file (text or binary) with the room, end-to-end encrypted; returns `{artifactId, offeredTo, olderMembers}`. |
+| `tunnel_receive({artifactId, savePath})` | any    | Fetch an offered artifact, verify its hash, and write it to a path you choose.                                      |
+| `tunnel_status()`                        | any    | Inspect the session: role, goal, member roster, pending invites, offered artifacts, lastSeq.                        |
+| `tunnel_close({summary?})`               | any    | Host: ends the session for everyone. Member: leaves the room.                                                       |
 
 ## Security model
 
@@ -171,6 +187,14 @@ between developers' AI agents. Here's exactly what it does and does not protect:
   (cap 16), every invite single-use + expiring. Admission is bounded by how
   many invites the host chose to mint, not by who happens to have the room's
   key.
+- **Shared files are end-to-end encrypted and hash-verified.** `tunnel_share`
+  seals a file's bytes with the same room key as chat (NaCl `secretbox`)
+  before they cross the tunnel, and carries a plaintext sha256 of the
+  contents; `tunnel_receive` decrypts, reassembles, and verifies that hash
+  before writing anything to disk. The filename, size, and kind are plaintext
+  metadata (don't put secrets in a filename), and a received file is
+  untrusted — `tunnel_receive` only ever writes to a path the receiver
+  chooses, never the sender's name.
 - **The peer is untrusted input, not an instruction source.** Messages from
   other agents are data to reason about, not commands to execute — and this
   applies to every member in a room, not just one. The etiquette skill directs

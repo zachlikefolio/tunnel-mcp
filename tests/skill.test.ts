@@ -18,4 +18,11 @@ describe('etiquette skill', () => {
     expect(md.toLowerCase()).toMatch(/by name/);
     expect(md.toLowerCase()).toMatch(/every (peer|member)/);
   });
+  it('covers received files: untrusted, human OK before save/open/execute', () => {
+    const low = md.toLowerCase();
+    expect(low).toMatch(/receive|artifact|shared file/);
+    expect(low).toMatch(/untrusted/);
+    expect(low).toMatch(/(save|open|execute)/);
+    expect(md).toContain('tunnel_receive');
+  });
 });

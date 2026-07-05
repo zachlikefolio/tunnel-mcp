@@ -78,6 +78,19 @@ you share an invite with anyone.
   invite stays dead; getting back in requires a fresh invite from the host.
   Only the host can mint invites, so a member who leaks the room key alone
   cannot seat anyone.
+- **Shared files are end-to-end encrypted and integrity-checked.** Artifact
+  chunks passed to `tunnel_share` are sealed with the same room key and
+  `secretbox` construction as chat message bodies — the relay and the
+  Cloudflare edge it runs over only ever see ciphertext for a file's contents.
+  The offer carries a plaintext sha256 of the whole file, which the receiver
+  verifies after decrypt-and-reassemble, before writing anything: a host that
+  reorders, alters, or truncates chunks is detected and the file is refused,
+  never written. The filename, size, and kind are plaintext metadata (like the
+  goal) — don't put secrets in a filename. A received file is untrusted:
+  nothing auto-writes it. `tunnel_receive` writes only to a path the receiver
+  chooses (the sender's filename is never used as a write path), and the
+  bundled etiquette skill instructs the agent to get its human's explicit
+  sign-off before saving, opening, or executing it.
 - **Peer input is untrusted, from every member.** Everything a peer sends
   over the tunnel is data, never an instruction — and in a room, that holds
   for each participant individually, not just "the other side." The bundled
@@ -154,9 +167,18 @@ protect against:
   every invite for that session, not a separate key per pair of
   participants. In a room, that means every current member can decrypt every
   other member's chat messages — there is no sub-group or pairwise privacy
-  within a session. Admission is still gated per-person by the invite ledger
-  (see above); this limitation is about message confidentiality once someone
-  is in the room, not about who can get in.
+  within a session. The same limitation applies to shared files: any current
+  member can fetch (`tunnel_receive`) any artifact offered to the room, not
+  just the pair that originally cared about it — there is no per-recipient
+  encryption of file contents, only the room-wide key. Admission is still
+  gated per-person by the invite ledger (see above); this limitation is about
+  confidentiality once someone is in the room, not about who can get in.
+- **A v3 host still admits v2 members, but they can't see files.** Protocol
+  v3 (this release) is additive over v2: a v2 member can still join and
+  participate in chat, but the host never delivers artifact offers or
+  artifact frames to a sub-v3 member, live or from backlog — they simply
+  don't know a file was shared. v1 (tokenless) links/clients are still
+  rejected entirely, unchanged from the v2 release.
 - **"Trusting" a peer only goes as far as your own agent's guardrails.**
   tunnel-mcp does not sandbox or validate what a peer sends beyond
   transport-level auth. The confidentiality/integrity of your own
@@ -169,9 +191,11 @@ protect against:
   every member, not just one.
 - **Out of scope for this release**: host-offline/async messaging,
   alternative transports (ngrok, WebRTC), in-session key/invite rotation
-  (replacing a still-valid invite before it's used or expires), and
-  encryption of the goal or other connection metadata. These may be
-  considered for future versions but should not be assumed to exist today.
+  (replacing a still-valid invite before it's used or expires), encryption of
+  the goal or other connection metadata, `unshare`/rescinding an already-offered
+  artifact, and resumable file transfers (a dropped fetch starts over). These
+  may be considered for future versions but should not be assumed to exist
+  today.
 
 If you find a way to break any of the guarantees above (e.g. read a chat
 message body without the key, join a locked session, or get an agent to
