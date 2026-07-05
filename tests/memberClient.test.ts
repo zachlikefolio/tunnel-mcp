@@ -324,6 +324,25 @@ describe('MemberClient', () => {
     );
   });
 
+  it('share() rejects with wire code "unknown" when the store rejects bad_meta (invalid declared size)', async () => {
+    const { member } = await setup();
+    await member.connect(0);
+    // size: 0 fails ArtifactStore.begin()'s own validation (`meta.size < 1` →
+    // 'bad_meta') before any chunk is buffered. There is no dedicated wire `error`
+    // enum member for 'bad_meta', so hostRelay's toWireCode maps it to the generic
+    // 'unknown' — pin that mapping here, not just the "too large" message text.
+    const meta = { name: 'f', kind: 'text' as const, size: 0, sha256: 'x', chunkCount: 1 };
+    let caught: (Error & { code?: string }) | undefined;
+    try {
+      await member.share('bad-meta-1', meta, ['x']);
+      throw new Error('expected member.share() to reject');
+    } catch (e) {
+      caught = e as Error & { code?: string };
+    }
+    expect(caught?.message).toBe('artifact rejected');
+    expect(caught?.code).toBe('unknown');
+  });
+
   it('share() rejects with "not connected" before connect()', async () => {
     const { member } = await setup();
     await expect(

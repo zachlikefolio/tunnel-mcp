@@ -158,18 +158,19 @@ export class MemberClient extends EventEmitter {
           } else if (frame.t === 'error') {
             const aid = typeof frame.artifactId === 'string' ? frame.artifactId : undefined;
             const msg = typeof frame.message === 'string' ? frame.message : 'artifact error';
+            const code = typeof frame.code === 'string' ? frame.code : undefined;
             if (aid) {
               const s = this.shares.get(aid);
               if (s) {
                 clearTimeout(s.timer);
                 this.shares.delete(aid);
-                s.reject(new Error(msg));
+                s.reject(Object.assign(new Error(msg), { code }));
               }
               const f = this.fetches.get(aid);
               if (f) {
                 clearTimeout(f.timer);
                 this.fetches.delete(aid);
-                f.reject(new Error(msg));
+                f.reject(Object.assign(new Error(msg), { code }));
               }
             }
           }
