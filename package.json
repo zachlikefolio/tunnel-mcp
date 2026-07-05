@@ -33,6 +33,7 @@
     "e2e": "tsx scripts/e2e-two-agents.ts",
     "demo": "tsx scripts/demo.ts",
     "smoke:room": "tsx scripts/room-smoke.ts",
+    "smoke:artifact": "tsx scripts/artifact-smoke.ts",
     "postinstall": "node postinstall.mjs",
     "prepublishOnly": "npm run build"
   },
