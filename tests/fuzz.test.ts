@@ -255,3 +255,343 @@ describe('fuzz: v2 untrusted frames', () => {
     }
   }, 5000);
 });
+
+describe('fuzz: artifact frames through the real relay + member handlers', () => {
+  // Garbage payloads covering every artifact-related frame shape, with every
+  // field (including `t`'s siblings) fuzzed to arbitrary JSON values — non-array
+  // seq, huge/negative numbers, wrong types, missing fields. Shared shape used
+  // against both the relay (untrusted member) and the member (untrusted host).
+  const artifactGarbage = () =>
+    fc.record(
+      {
+        t: fc.constantFrom(
+          'share_begin',
+          'share_chunk',
+          'share_end',
+          'fetch',
+          'fetch_chunk',
+          'error',
+        ),
+        artifactId: fc.anything(),
+        name: fc.anything(),
+        kind: fc.anything(),
+        size: fc.anything(),
+        sha256: fc.anything(),
+        chunkCount: fc.anything(),
+        seq: fc.anything(),
+        data: fc.anything(),
+        last: fc.anything(),
+        code: fc.anything(),
+        message: fc.anything(),
+      },
+      { requiredKeys: ['t'] },
+    );
+
+  it('a barrage of malformed share/fetch/chunk frames never crashes the relay; a valid chat still flows', async () => {
+    const { HostRelay } = await import('../src/relay/hostRelay.js');
+    const { MemberClient: MC } = await import('../src/relay/memberClient.js');
+    const {
+      generateTunnelId: genTid,
+      parseLink: pl,
+      mintInvite: mi,
+    } = await import('../src/protocol/link.js');
+
+    const key = generateKey();
+    const tunnelId = genTid();
+    const hostLog = new SessionLog(tunnelId);
+    const relay = new HostRelay({ tunnelId, key, goal: 'fuzz', hostName: 'host' }, hostLog);
+    const port = await relay.start();
+    const base = `http://127.0.0.1:${port}`;
+
+    const mk = async (name: string) => {
+      const { token } = relay.mintInvites(1)[0];
+      const link = pl(mi(base, tunnelId, key, token));
+      const log = new SessionLog(genTid());
+      const m = new MC(link, name, log);
+      await m.connect(0);
+      return { m, log };
+    };
+
+    const sender = await mk('sender');
+    const watcher = await mk('watcher');
+    try {
+      // Fire malformed share_*/fetch/fetch_chunk/error frames straight at the relay
+      // socket (reach into the client's ws) — the whole-handler try/catch must hold.
+      const raw = (sender.m as unknown as { ws: import('ws').WebSocket }).ws;
+      const garbage = fc.sample(artifactGarbage(), { numRuns: 200, seed: 20260705 });
+      for (const g of garbage) raw.send(JSON.stringify(g));
+
+      // The relay is still alive: a legit chat from the watcher reaches the sender.
+      const { buildChat } = await import('../src/protocol/messages.js');
+      const seen = new Promise<string>((resolve) => {
+        sender.m.on('message', (msg: WireMessage) => {
+          if (msg.kind === 'chat') resolve(msg.id);
+        });
+      });
+      const outgoing = buildChat(watcher.m.selfId!, 'still alive', key);
+      await watcher.m.say(outgoing);
+      expect(await seen).toBeDefined();
+    } finally {
+      sender.m.close();
+      watcher.m.close();
+      await relay.close();
+      hostLog.delete();
+      sender.log.delete();
+      watcher.log.delete();
+    }
+  }, 8000);
+
+  it('a barrage of malformed artifact frames from an untrusted host never crashes the member; a valid message still arrives after', async () => {
+    const { WebSocketServer } = await import('ws');
+    const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await new Promise<void>((resolveListen) => wss.once('listening', () => resolveListen()));
+    const port = (wss.address() as { port: number }).port;
+
+    const hostId = 'aabbccddeeff0011';
+    const selfId = 'deadbeefcafebabe';
+
+    let hostSock: import('ws').WebSocket | undefined;
+    wss.on('connection', (sock) => {
+      hostSock = sock;
+      sock.send(JSON.stringify({ t: 'challenge', nonce: 'fuzz-artifact-nonce' }));
+      sock.once('message', () => {
+        sock.send(
+          JSON.stringify({
+            t: 'auth_ok',
+            goal: 'fuzz artifacts',
+            selfId,
+            roster: [
+              { id: selfId, name: 'bob', isHost: false, connected: true },
+              { id: hostId, name: 'alice', isHost: true, connected: true },
+            ],
+            backlog: [],
+          }),
+        );
+      });
+    });
+
+    const link = parseLink(
+      mintInvite(`http://127.0.0.1:${port}`, generateTunnelId(), generateKey(), generateToken()),
+    );
+    const memberLog = new SessionLog(generateTunnelId());
+    const member = new MemberClient(link, 'bob', memberLog, {
+      handshakeTimeoutMs: 2000,
+      connectDeadlineMs: 3000,
+    });
+
+    try {
+      await member.connect(0);
+      if (!hostSock) throw new Error('test bug: host never saw the connection');
+
+      const payloads = fc.sample(artifactGarbage(), { numRuns: 150, seed: 20260702 });
+      for (const p of payloads) hostSock.send(JSON.stringify(p));
+
+      // The member's handler loop is still alive: a final well-formed frame
+      // still arrives after the barrage.
+      const finalMsg: WireMessage = {
+        id: 'fuzz-artifact-final-msg-id',
+        seq: 999,
+        from: hostId,
+        kind: 'system',
+        body: 'artifact handler still alive',
+        ts: Date.now(),
+      };
+      const received = new Promise<WireMessage>((resolve) => {
+        member.on('message', (m: WireMessage) => {
+          if (m && m.id === finalMsg.id) resolve(m);
+        });
+      });
+      hostSock.send(JSON.stringify({ t: 'msg', msg: finalMsg }));
+
+      const got = await received;
+      expect(got.id).toBe(finalMsg.id);
+      expect(got.body).toBe('artifact handler still alive');
+    } finally {
+      member.close();
+      wss.close();
+      memberLog.delete();
+    }
+  }, 5000);
+
+  it('negative / oversized seq and chunkCount are rejected by the store, never buffered', async () => {
+    const { ArtifactStore } = await import('../src/relay/artifactStore.js');
+    const s = new ArtifactStore({
+      maxArtifactBytes: 1000,
+      maxMemberBytes: 1000,
+      maxRoomBytes: 1000,
+      ttlMs: 1000,
+    });
+    fc.assert(
+      fc.property(fc.integer(), fc.integer(), (size, chunkCount) => {
+        const r = s.begin(
+          `id-${size}-${chunkCount}`,
+          { name: 'f', kind: 'binary', size, sha256: 'x', chunkCount },
+          'm',
+        );
+        // Only a positive, in-cap size with a positive chunkCount may be accepted.
+        if (r === 'ok') return size >= 1 && size <= 1000 && chunkCount >= 1;
+        return true;
+      }),
+      { numRuns: 500 },
+    );
+    fc.assert(
+      fc.property(fc.integer(), (seq) => {
+        s.begin(
+          'putfuzz',
+          { name: 'f', kind: 'binary', size: 4, sha256: 'x', chunkCount: 2 },
+          'm2',
+        );
+        const r = s.putChunk('putfuzz', seq, 'data');
+        s.evict('putfuzz');
+        return r === 'ok' ? seq === 0 || seq === 1 : true;
+      }),
+      { numRuns: 500 },
+    );
+  });
+
+  it('a tampered ciphertext chunk fails the receiver post-decrypt hash check (codec-level)', async () => {
+    const { chunkAndSeal, reassembleAndVerify } = await import('../src/protocol/artifact.js');
+    const bytes = new Uint8Array([1, 2, 3, 4, 5, 6]);
+    const { chunks, sha256 } = chunkAndSeal(bytes, key, 2);
+    const tampered = [...chunks];
+    tampered[0] = chunkAndSeal(new Uint8Array([9, 9]), key, 2).chunks[0];
+    expect(() => reassembleAndVerify(tampered, key, sha256, bytes.length)).toThrow(
+      /hash mismatch — refusing to write/,
+    );
+  });
+
+  // The codec-level test above proves reassembleAndVerify itself is sound. The
+  // two tests below prove the SAME guarantee holds when a chunk is tampered at
+  // rest in the relay's store and fetched over a REAL socket by a REAL member,
+  // all the way through TunnelSession.receive()'s reassemble-then-writeFile —
+  // i.e. the actual product code path a user hits, not just the primitive.
+  function fakeDeps() {
+    return {
+      ensureCloudflared: async () => 'fake',
+      startCloudflared: async (_b: string, port: number) => ({
+        publicUrl: `http://127.0.0.1:${port}`,
+        stop() {},
+      }),
+    };
+  }
+
+  async function waitForOffer(
+    s: import('../src/session.js').TunnelSession,
+    deadlineMs = 4000,
+  ): Promise<void> {
+    const stop = Date.now() + deadlineMs;
+    // `since` MUST advance across iterations: once the log already has an
+    // earlier message (e.g. the "joined" system message), calling listen(0,
+    // ...) again and again returns synchronously every time (log.since(0) is
+    // already non-empty) and never awaits the socket/timer branch — starving
+    // the event loop so the pending network share/fetch never gets a turn to
+    // complete. Tracking `since` forces listen() to actually wait once caught up.
+    let since = 0;
+    while (Date.now() < stop) {
+      const { messages } = await s.listen(since, Math.max(100, stop - Date.now()));
+      for (const m of messages) since = Math.max(since, m.seq);
+      if (messages.some((m) => m.kind === 'artifact')) return;
+    }
+    throw new Error('waitForOffer timed out');
+  }
+
+  it('a chunk tampered at rest (same-length swap) fails the REAL receive path with the hash-mismatch message and writes no file', async () => {
+    const { TunnelSession } = await import('../src/session.js');
+    const { chunkAndSeal: seal } = await import('../src/protocol/artifact.js');
+    const fs = await import('node:fs/promises');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const crypto = await import('node:crypto');
+
+    const host = new TunnelSession(fakeDeps());
+    const ana = new TunnelSession();
+    const src = path.join(os.tmpdir(), `tunnel-tamper-src-${crypto.randomUUID()}`);
+    const dst = path.join(os.tmpdir(), `tunnel-tamper-dst-${crypto.randomUUID()}`);
+    try {
+      const opened = await host.open('tamper room', 'Host', { invites: 1 });
+      await ana.join(opened.invites[0].joinLink, 'Ana');
+
+      const payload = Buffer.from('integrity-check-payload-bytes!!');
+      await fs.writeFile(src, payload);
+      const shared = await host.share(src);
+      await waitForOffer(ana);
+
+      // Reach into the host relay's in-memory store — this stands in for an
+      // on-path tamperer flipping the sealed bytes before Ana's real `fetch`
+      // pulls them over the socket. Swap chunk 0 for a DIFFERENT plaintext of
+      // the SAME length, sealed under the real session key: it decrypts
+      // cleanly (so this isn't just an AEAD-auth-failure case) but reassembles
+      // to the wrong bytes, so only the post-decrypt sha256 check catches it.
+      const realKey = (host as unknown as { key: Uint8Array }).key;
+      const store = (
+        host as unknown as {
+          relay: { store: import('../src/relay/artifactStore.js').ArtifactStore };
+        }
+      ).relay.store;
+      const stored = store.get(shared.artifactId);
+      expect(stored).toBeDefined();
+      const decoy = seal(new Uint8Array(payload.length).fill(0x41), realKey, payload.length)
+        .chunks[0];
+      stored!.chunks[0] = decoy;
+
+      await expect(ana.receive(shared.artifactId, dst)).rejects.toThrow(
+        /artifact hash mismatch — refusing to write/,
+      );
+      await expect(fs.access(dst)).rejects.toThrow();
+    } finally {
+      await fs.rm(src, { force: true });
+      await fs.rm(dst, { force: true });
+      await ana.close().catch(() => {});
+      await host.close().catch(() => {});
+    }
+  }, 15000);
+
+  it('a chunk tampered at rest (different-length swap) fails the REAL receive path with the size-mismatch message and writes no file', async () => {
+    const { TunnelSession } = await import('../src/session.js');
+    const { chunkAndSeal: seal } = await import('../src/protocol/artifact.js');
+    const fs = await import('node:fs/promises');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const crypto = await import('node:crypto');
+
+    const host = new TunnelSession(fakeDeps());
+    const ana = new TunnelSession();
+    const src = path.join(os.tmpdir(), `tunnel-tamper2-src-${crypto.randomUUID()}`);
+    const dst = path.join(os.tmpdir(), `tunnel-tamper2-dst-${crypto.randomUUID()}`);
+    try {
+      const opened = await host.open('tamper room 2', 'Host', { invites: 1 });
+      await ana.join(opened.invites[0].joinLink, 'Ana');
+
+      const payload = Buffer.from('another integrity payload, twelve bytes longer!!');
+      await fs.writeFile(src, payload);
+      const shared = await host.share(src);
+      await waitForOffer(ana);
+
+      // Same tamper-at-rest mechanism, but the decoy plaintext is a DIFFERENT
+      // length: it still decrypts cleanly (a valid, independently-sealed
+      // chunk), but the reassembled total no longer matches the declared
+      // size, so the SIZE check must fire before the hash check ever runs.
+      const realKey = (host as unknown as { key: Uint8Array }).key;
+      const store = (
+        host as unknown as {
+          relay: { store: import('../src/relay/artifactStore.js').ArtifactStore };
+        }
+      ).relay.store;
+      const stored = store.get(shared.artifactId);
+      expect(stored).toBeDefined();
+      const shorter = new Uint8Array(payload.length - 5).fill(0x42);
+      const decoy = seal(shorter, realKey, shorter.length).chunks[0];
+      stored!.chunks[0] = decoy;
+
+      await expect(ana.receive(shared.artifactId, dst)).rejects.toThrow(
+        /artifact size mismatch — refusing to write/,
+      );
+      await expect(fs.access(dst)).rejects.toThrow();
+    } finally {
+      await fs.rm(src, { force: true });
+      await fs.rm(dst, { force: true });
+      await ana.close().catch(() => {});
+      await host.close().catch(() => {});
+    }
+  }, 15000);
+});

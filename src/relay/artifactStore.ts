@@ -54,7 +54,14 @@ export class ArtifactStore {
   ): 'ok' | 'too_large' | 'duplicate' | 'member_full' | 'room_full' | 'bad_meta' {
     if (this.artifacts.has(artifactId)) return 'duplicate';
     if (!Number.isInteger(meta.size) || meta.size < 1) return 'bad_meta';
-    if (!Number.isInteger(meta.chunkCount) || meta.chunkCount < 1) return 'bad_meta';
+    // chunkCount is bounded by size (chunkAndSeal never emits an empty chunk, so a
+    // legitimate upload can never have more chunks than plaintext bytes). Without
+    // this, an attacker-declared chunkCount near Number.MAX_SAFE_INTEGER/2^31 with
+    // a tiny declared size sails past the size cap below and crashes the process
+    // via `new Array(meta.chunkCount)` a few lines down (V8 OOM abort — reproduced).
+    if (!Number.isInteger(meta.chunkCount) || meta.chunkCount < 1 || meta.chunkCount > meta.size) {
+      return 'bad_meta';
+    }
     if (meta.size > this.opts.maxArtifactBytes) return 'too_large';
     if (this.bytesFor(by) + meta.size > this.opts.maxMemberBytes) return 'member_full';
     if (this.totalBytes() + meta.size > this.opts.maxRoomBytes) return 'room_full';
