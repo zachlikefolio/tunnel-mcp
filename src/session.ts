@@ -1,15 +1,21 @@
 import { EventEmitter } from 'node:events';
+import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
 import { Key, generateKey } from './protocol/crypto.js';
 import { generateTunnelId, mintInvite, parseLink } from './protocol/link.js';
 import {
   buildChat,
   buildSystem,
   decrypt,
+  newId,
+  ArtifactOffer,
   PlainMessage,
   ParticipantId,
   RosterEntry,
   WireMessage,
 } from './protocol/messages.js';
+import { chunkAndSeal } from './protocol/artifact.js';
+import type { ArtifactMeta } from './relay/artifactStore.js';
 import { SessionLog } from './log/sessionLog.js';
 import { HostRelay } from './relay/hostRelay.js';
 import { MemberClient } from './relay/memberClient.js';
@@ -21,6 +27,9 @@ import {
   DEFAULT_JOIN_LINK_TTL_MS,
   MAX_ROOM_MEMBERS,
   OPEN_RETRY_ATTEMPTS,
+  MAX_ARTIFACT_BYTES,
+  ARTIFACT_CHUNK_BYTES,
+  ARTIFACT_PROTOCOL_VERSION,
 } from './config.js';
 import { buildInvite } from './invite.js';
 
@@ -40,6 +49,14 @@ export interface SessionStatus {
   openedAt: number;
   members: { name: string; isHost: boolean; connected: boolean }[];
   pendingInvites: number;
+  artifacts: {
+    id: string;
+    name: string;
+    kind: 'text' | 'binary';
+    size: number;
+    from: ParticipantId;
+    fromName: string;
+  }[];
 }
 
 export interface MintedInvite {
@@ -218,6 +235,54 @@ export class TunnelSession {
     };
   }
 
+  async share(path: string): Promise<{
+    artifactId: string;
+    name: string;
+    size: number;
+    kind: 'text' | 'binary';
+    sha256: string;
+    offeredTo: number;
+    olderMembers: number;
+  }> {
+    if (!this.isOpen || !this.role || !this.key) throw new Error('no open tunnel');
+    const bytes = new Uint8Array(await readFile(path));
+    if (bytes.length < 1) throw new Error('cannot share an empty file');
+    if (bytes.length > MAX_ARTIFACT_BYTES) {
+      throw new Error(`artifact exceeds the ${MAX_ARTIFACT_BYTES}-byte per-file limit`);
+    }
+    const name = basename(path);
+    const { chunks, sha256, chunkCount, kind } = chunkAndSeal(
+      bytes,
+      this.key,
+      ARTIFACT_CHUNK_BYTES,
+    );
+    const artifactId = newId();
+    const meta: ArtifactMeta = { name, kind, size: bytes.length, sha256, chunkCount };
+    let sharerId: ParticipantId;
+    if (this.role === 'host') {
+      this.relay!.ingestArtifact(artifactId, meta, chunks, this.relay!.hostId);
+      sharerId = this.relay!.hostId;
+    } else {
+      await this.member!.share(artifactId, meta, chunks);
+      sharerId = this.member!.selfId ?? 'member';
+    }
+    const { offeredTo, olderMembers } = this.artifactAudience(sharerId);
+    return { artifactId, name, size: bytes.length, kind, sha256, offeredTo, olderMembers };
+  }
+
+  private artifactAudience(sharerId: ParticipantId): { offeredTo: number; olderMembers: number } {
+    const entries =
+      (this.role === 'host' ? this.relay?.rosterEntries() : this.member?.roster()) ?? [];
+    let offeredTo = 0;
+    let olderMembers = 0;
+    for (const e of entries) {
+      if (e.id === sharerId) continue;
+      if ((e.protocolVersion ?? 0) >= ARTIFACT_PROTOCOL_VERSION) offeredTo++;
+      else olderMembers++;
+    }
+    return { offeredTo, olderMembers };
+  }
+
   async listen(
     sinceSeq: number,
     timeoutMs = DEFAULT_LISTEN_TIMEOUT_MS,
@@ -272,6 +337,24 @@ export class TunnelSession {
       openedAt: this.openedAt,
       members: entries.map((e) => ({ name: e.name, isHost: e.isHost, connected: e.connected })),
       pendingInvites: this.role === 'host' ? (this.relay?.pendingInvites() ?? 0) : 0,
+      artifacts: (this.log?.all() ?? []).flatMap((m) => {
+        if (m.kind !== 'artifact') return [];
+        try {
+          const o = JSON.parse(m.body) as ArtifactOffer;
+          return [
+            {
+              id: o.id,
+              name: o.name,
+              kind: o.kind,
+              size: o.size,
+              from: o.from,
+              fromName: this.nameOf(o.from),
+            },
+          ];
+        } catch {
+          return [];
+        }
+      }),
     };
   }
 

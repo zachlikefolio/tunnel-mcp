@@ -319,4 +319,40 @@ describe('TunnelSession (host <-> member, fake cloudflared)', () => {
     expect(seen).toBeDefined();
     expect(seen!.seq).toBe(early.seq);
   });
+
+  it('host share() reads a file, offers it, and reports the audience', async () => {
+    const fs = await import('node:fs/promises');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const host = new TunnelSession(fakeDeps({}));
+    sessions.push(host);
+    await host.open('share test', 'Host');
+
+    const file = path.join(os.tmpdir(), `tunnel-share-${Date.now()}.txt`);
+    await fs.writeFile(file, 'hello artifact world');
+    const res = await host.share(file);
+    expect(res.artifactId).toMatch(/^[0-9a-f]{16}$/);
+    expect(res.name).toBe(path.basename(file));
+    expect(res.size).toBe(20);
+    expect(res.kind).toBe('text');
+    expect(res.offeredTo).toBe(0); // no other members yet
+    expect(res.olderMembers).toBe(0);
+
+    const { messages } = await host.listen(0, 500);
+    expect(messages.some((m) => m.kind === 'artifact')).toBe(true);
+    await fs.rm(file, { force: true });
+  });
+
+  it('share() rejects an empty file before uploading', async () => {
+    const fs = await import('node:fs/promises');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const host = new TunnelSession(fakeDeps({}));
+    sessions.push(host);
+    await host.open('g', 'Host');
+    const file = path.join(os.tmpdir(), `tunnel-empty-${Date.now()}.txt`);
+    await fs.writeFile(file, '');
+    await expect(host.share(file)).rejects.toThrow('cannot share an empty file');
+    await fs.rm(file, { force: true });
+  });
 });

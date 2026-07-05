@@ -11,6 +11,7 @@ import {
   encodeFrame,
   decodeFrame,
 } from '../protocol/messages.js';
+import { ArtifactMeta } from './artifactStore.js';
 import {
   DEFAULT_LISTEN_TIMEOUT_MS,
   GUEST_HANDSHAKE_TIMEOUT_MS,
@@ -32,6 +33,20 @@ export class MemberClient extends EventEmitter {
   private pending = new Map<
     string,
     { resolve: (seq: number) => void; reject: (e: Error) => void }
+  >();
+  private shares = new Map<
+    string,
+    { resolve: () => void; reject: (e: Error) => void; timer: NodeJS.Timeout }
+  >();
+  private fetches = new Map<
+    string,
+    {
+      chunks: (string | undefined)[];
+      received: number;
+      resolve: (chunks: string[]) => void;
+      reject: (e: Error) => void;
+      timer: NodeJS.Timeout;
+    }
   >();
 
   constructor(
@@ -123,7 +138,40 @@ export class MemberClient extends EventEmitter {
               this.pending.delete(frame.msg.id);
               waiter.resolve(frame.msg.seq);
             }
+            // A share() resolves when its own offer echoes back through the sequencer.
+            if (frame.msg.kind === 'artifact') {
+              try {
+                const offer = JSON.parse(frame.msg.body) as { id?: string };
+                if (offer && typeof offer.id === 'string') {
+                  const s = this.shares.get(offer.id);
+                  if (s) {
+                    clearTimeout(s.timer);
+                    this.shares.delete(offer.id);
+                    s.resolve();
+                  }
+                }
+              } catch {
+                /* malformed offer body — ignore */
+              }
+            }
             this.emit('message', frame.msg);
+          } else if (frame.t === 'error') {
+            const aid = typeof frame.artifactId === 'string' ? frame.artifactId : undefined;
+            const msg = typeof frame.message === 'string' ? frame.message : 'artifact error';
+            if (aid) {
+              const s = this.shares.get(aid);
+              if (s) {
+                clearTimeout(s.timer);
+                this.shares.delete(aid);
+                s.reject(new Error(msg));
+              }
+              const f = this.fetches.get(aid);
+              if (f) {
+                clearTimeout(f.timer);
+                this.fetches.delete(aid);
+                f.reject(new Error(msg));
+              }
+            }
           }
         } catch {
           /* untrusted-frame guard */
@@ -137,10 +185,21 @@ export class MemberClient extends EventEmitter {
     });
   }
 
-  // Reject every in-flight say() so a lost echo surfaces as an error, never a hang.
+  // Reject every in-flight say()/share()/fetch() so a lost echo surfaces as an
+  // error, never a hang.
   private failPending(err: Error): void {
     for (const [, p] of this.pending) p.reject(err);
     this.pending.clear();
+    for (const [, s] of this.shares) {
+      clearTimeout(s.timer);
+      s.reject(err);
+    }
+    this.shares.clear();
+    for (const [, f] of this.fetches) {
+      clearTimeout(f.timer);
+      f.reject(err);
+    }
+    this.fetches.clear();
   }
 
   say(msg: WireMessage): Promise<number> {
@@ -161,6 +220,33 @@ export class MemberClient extends EventEmitter {
         },
       });
       this.ws.send(encodeFrame({ t: 'send', msg }));
+    });
+  }
+
+  share(artifactId: string, meta: ArtifactMeta, chunks: string[]): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN)
+        return reject(new Error('not connected'));
+      const timer = setTimeout(() => {
+        if (this.shares.delete(artifactId))
+          reject(new Error('timed out waiting for the share to be accepted'));
+      }, DEFAULT_LISTEN_TIMEOUT_MS);
+      this.shares.set(artifactId, { resolve, reject, timer });
+      this.ws.send(
+        encodeFrame({
+          t: 'share_begin',
+          artifactId,
+          name: meta.name,
+          kind: meta.kind,
+          size: meta.size,
+          sha256: meta.sha256,
+          chunkCount: meta.chunkCount,
+        }),
+      );
+      for (let seq = 0; seq < chunks.length; seq++) {
+        this.ws.send(encodeFrame({ t: 'share_chunk', artifactId, seq, data: chunks[seq] }));
+      }
+      this.ws.send(encodeFrame({ t: 'share_end', artifactId }));
     });
   }
 

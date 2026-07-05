@@ -7,7 +7,9 @@ import {
   RosterEntry,
   ParticipantId,
   WireMessage,
+  ArtifactOffer,
   buildSystem,
+  buildArtifactMessage,
   decodeFrame,
   encodeFrame,
   newParticipantId,
@@ -20,8 +22,13 @@ import {
   PROTOCOL_VERSION,
   MIN_PROTOCOL_VERSION,
   ARTIFACT_PROTOCOL_VERSION,
+  MAX_ARTIFACT_BYTES,
+  MAX_MEMBER_ARTIFACT_BYTES,
+  MAX_ROOM_ARTIFACT_BYTES,
+  ARTIFACT_TTL_MS,
 } from '../config.js';
 import { InviteLedger } from './inviteLedger.js';
+import { ArtifactStore, ArtifactMeta } from './artifactStore.js';
 
 export interface HostRelayOptions {
   tunnelId: string;
@@ -30,6 +37,7 @@ export interface HostRelayOptions {
   hostName: string;
   idleMs?: number;
   joinTtlMs?: number;
+  artifactTtlMs?: number;
 }
 
 const INCOMPATIBLE = 'incompatible client — upgrade: npx -y tunnel-mcp@latest';
@@ -47,6 +55,7 @@ export class HostRelay extends EventEmitter {
   private server?: http.Server;
   private wss?: WebSocketServer;
   private idleTimer?: NodeJS.Timeout;
+  private store: ArtifactStore;
 
   constructor(
     private opts: HostRelayOptions,
@@ -54,6 +63,12 @@ export class HostRelay extends EventEmitter {
   ) {
     super();
     this.ledger = new InviteLedger(opts.joinTtlMs ?? DEFAULT_JOIN_LINK_TTL_MS);
+    this.store = new ArtifactStore({
+      maxArtifactBytes: MAX_ARTIFACT_BYTES,
+      maxMemberBytes: MAX_MEMBER_ARTIFACT_BYTES,
+      maxRoomBytes: MAX_ROOM_ARTIFACT_BYTES,
+      ttlMs: opts.artifactTtlMs ?? ARTIFACT_TTL_MS,
+    });
     this.roster.set(this.hostId, {
       id: this.hostId,
       name: opts.hostName,
@@ -173,6 +188,155 @@ export class HostRelay extends EventEmitter {
     this.idleTimer.unref?.();
   }
 
+  // ---- artifact sharing ---------------------------------------------------
+
+  private sendError(ws: WebSocket, code: string, message: string, artifactId?: string): void {
+    ws.send(encodeFrame({ t: 'error', code, message, ...(artifactId ? { artifactId } : {}) }));
+  }
+
+  // Store-internal codes that fall outside the wire `error` enum
+  // ('too_large' | 'member_full' | 'room_full' | 'duplicate' | 'not_found' |
+  // 'unknown' | 'bad_seq' | 'incomplete') are mapped so the wire code is always
+  // a member of that enum. `bad_meta` (invalid declared size/chunkCount) has no
+  // dedicated wire code, so it surfaces as the generic 'unknown'; `duplicate_chunk`
+  // maps to 'duplicate'.
+  private toWireCode(code: string): string {
+    if (code === 'bad_meta') return 'unknown';
+    if (code === 'duplicate_chunk') return 'duplicate';
+    return code;
+  }
+
+  private capMessage(code: string): string {
+    switch (code) {
+      case 'too_large':
+        return `artifact exceeds the ${MAX_ARTIFACT_BYTES}-byte per-file limit`;
+      case 'member_full':
+        return `too many bytes buffered for you (limit ${MAX_MEMBER_ARTIFACT_BYTES})`;
+      case 'room_full':
+        return `the room's artifact buffer is full (limit ${MAX_ROOM_ARTIFACT_BYTES})`;
+      case 'duplicate':
+        return 'an artifact with that id is already uploading';
+      default:
+        return 'artifact rejected';
+    }
+  }
+
+  private handleShareBegin(
+    ws: WebSocket,
+    by: ParticipantId,
+    frame: Extract<ControlFrame, { t: 'share_begin' }>,
+  ): void {
+    this.store.evictExpired();
+    if (
+      typeof frame.artifactId !== 'string' ||
+      typeof frame.name !== 'string' ||
+      (frame.kind !== 'text' && frame.kind !== 'binary') ||
+      typeof frame.size !== 'number' ||
+      typeof frame.sha256 !== 'string' ||
+      typeof frame.chunkCount !== 'number'
+    ) {
+      return; // malformed — decodeFrame only guaranteed a string `t`
+    }
+    const meta: ArtifactMeta = {
+      name: frame.name,
+      kind: frame.kind,
+      size: frame.size,
+      sha256: frame.sha256,
+      chunkCount: frame.chunkCount,
+    };
+    const res = this.store.begin(frame.artifactId, meta, by);
+    if (res !== 'ok') {
+      const wire = this.toWireCode(res);
+      this.sendError(ws, wire, this.capMessage(wire), frame.artifactId);
+    }
+  }
+
+  private handleShareChunk(
+    ws: WebSocket,
+    frame: Extract<ControlFrame, { t: 'share_chunk' }>,
+  ): void {
+    if (
+      typeof frame.artifactId !== 'string' ||
+      typeof frame.seq !== 'number' ||
+      typeof frame.data !== 'string'
+    ) {
+      return;
+    }
+    const res = this.store.putChunk(frame.artifactId, frame.seq, frame.data);
+    // 'unknown'/'bad_seq' are reported so a client learns it targeted the wrong
+    // upload; cap failures (too_large/member_full/room_full/duplicate_chunk) drop
+    // the chunk silently — the missing chunk then surfaces as 'incomplete' at
+    // share_end, which is reported there.
+    if (res === 'unknown' || res === 'bad_seq') {
+      this.sendError(
+        ws,
+        res,
+        res === 'unknown' ? 'no such artifact upload' : 'chunk seq out of range',
+        frame.artifactId,
+      );
+    }
+  }
+
+  private handleShareEnd(
+    ws: WebSocket,
+    by: ParticipantId,
+    frame: Extract<ControlFrame, { t: 'share_end' }>,
+  ): void {
+    if (typeof frame.artifactId !== 'string') return;
+    const res = this.store.end(frame.artifactId);
+    if (res !== 'ok') {
+      this.store.evict(frame.artifactId); // a lying/incomplete upload never lingers
+      this.sendError(
+        ws,
+        res,
+        res === 'unknown' ? 'no such artifact upload' : 'artifact upload incomplete',
+        frame.artifactId,
+      );
+      return;
+    }
+    // Offer ONLY after end() === 'ok': the store never gates get()/chunkOf() on
+    // completeness, so broadcasting before end() would advertise a partial upload.
+    const stored = this.store.get(frame.artifactId)!;
+    const offer: ArtifactOffer = {
+      id: frame.artifactId,
+      name: stored.meta.name,
+      kind: stored.meta.kind,
+      size: stored.meta.size,
+      sha256: stored.meta.sha256,
+      from: by,
+    };
+    this.submit(buildArtifactMessage(by, offer));
+  }
+
+  /** Host-as-participant share: buffer already-sealed chunks, then offer via the sequencer. */
+  ingestArtifact(
+    artifactId: string,
+    meta: ArtifactMeta,
+    sealedChunks: string[],
+    by: ParticipantId = this.hostId,
+  ): ArtifactOffer {
+    this.store.evictExpired();
+    const res = this.store.begin(artifactId, meta, by);
+    if (res !== 'ok') throw new Error(this.capMessage(this.toWireCode(res)));
+    for (let seq = 0; seq < sealedChunks.length; seq++) {
+      this.store.putChunk(artifactId, seq, sealedChunks[seq]);
+    }
+    if (this.store.end(artifactId) !== 'ok') {
+      this.store.evict(artifactId);
+      throw new Error('artifact upload incomplete');
+    }
+    const offer: ArtifactOffer = {
+      id: artifactId,
+      name: meta.name,
+      kind: meta.kind,
+      size: meta.size,
+      sha256: meta.sha256,
+      from: by,
+    };
+    this.submit(buildArtifactMessage(by, offer));
+    return offer;
+  }
+
   // ---- connection handling -------------------------------------------------
 
   private onConnection(ws: WebSocket): void {
@@ -208,6 +372,14 @@ export class HostRelay extends EventEmitter {
             return;
           }
           this.submit({ ...msg, from: senderId, seq: -1, ts: 0 });
+        } else if (frame.t === 'share_begin') {
+          const by = this.byWs.get(ws);
+          if (by) this.handleShareBegin(ws, by, frame);
+        } else if (frame.t === 'share_chunk') {
+          if (this.byWs.get(ws)) this.handleShareChunk(ws, frame);
+        } else if (frame.t === 'share_end') {
+          const by = this.byWs.get(ws);
+          if (by) this.handleShareEnd(ws, by, frame);
         }
       } catch {
         /* untrusted-frame guard */

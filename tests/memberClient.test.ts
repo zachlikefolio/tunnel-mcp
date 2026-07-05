@@ -280,4 +280,54 @@ describe('MemberClient', () => {
       text: 'look at the logs',
     });
   });
+
+  it('share() uploads chunks and resolves when the offer echoes back', async () => {
+    const { key, relay, member, mkMember } = await setup();
+    await member.connect(0);
+    const receiver = mkMember('carol');
+    await receiver.connect(0);
+
+    const { chunkAndSeal } = await import('../src/protocol/artifact.js');
+    const bytes = new Uint8Array([1, 2, 3, 4, 5]);
+    const { chunks, sha256, chunkCount, kind } = chunkAndSeal(bytes, key, 2);
+    const artifactId = 'share-1';
+    const meta = { name: 'note.bin', kind, size: bytes.length, sha256, chunkCount };
+
+    const offerSeen = new Promise<any>((resolve) => {
+      receiver.on('message', (m: any) => {
+        if (m.kind === 'artifact') resolve(JSON.parse(m.body));
+      });
+    });
+    await member.share(artifactId, meta, chunks);
+    const offer = await offerSeen;
+    expect(offer.id).toBe(artifactId);
+    expect(offer.name).toBe('note.bin');
+    expect(offer.size).toBe(5);
+    expect(offer.from).toBe(member.selfId);
+    void relay;
+  });
+
+  it('share() rejects with the cap message when the artifact is too large', async () => {
+    const { member } = await setup();
+    await member.connect(0);
+    // Declare a size over the 10MB cap without actually sending 10MB: the relay's
+    // store.begin rejects on the declared size before any chunk is buffered.
+    const meta = {
+      name: 'big',
+      kind: 'binary' as const,
+      size: 11 * 1024 * 1024,
+      sha256: 'x',
+      chunkCount: 1,
+    };
+    await expect(member.share('too-big', meta, ['not-a-real-chunk'])).rejects.toThrow(
+      /per-file limit/,
+    );
+  });
+
+  it('share() rejects with "not connected" before connect()', async () => {
+    const { member } = await setup();
+    await expect(
+      member.share('x', { name: 'f', kind: 'text', size: 1, sha256: 'x', chunkCount: 1 }, ['c']),
+    ).rejects.toThrow('not connected');
+  });
 });
