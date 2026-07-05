@@ -173,6 +173,23 @@ export class MemberClient extends EventEmitter {
                 f.reject(Object.assign(new Error(msg), { code }));
               }
             }
+          } else if (frame.t === 'fetch_chunk') {
+            if (typeof frame.artifactId !== 'string') return;
+            const f = this.fetches.get(frame.artifactId);
+            if (!f) return;
+            if (typeof frame.seq === 'number' && frame.seq >= 0 && typeof frame.data === 'string') {
+              f.chunks[frame.seq] = frame.data;
+              f.received++;
+            }
+            if (frame.last === true) {
+              clearTimeout(f.timer);
+              this.fetches.delete(frame.artifactId);
+              if (f.chunks.length === 0 || f.chunks.some((c) => c === undefined)) {
+                f.reject(new Error('incomplete artifact transfer'));
+              } else {
+                f.resolve(f.chunks as string[]);
+              }
+            }
           }
         } catch {
           /* untrusted-frame guard */
@@ -248,6 +265,18 @@ export class MemberClient extends EventEmitter {
         this.ws.send(encodeFrame({ t: 'share_chunk', artifactId, seq, data: chunks[seq] }));
       }
       this.ws.send(encodeFrame({ t: 'share_end', artifactId }));
+    });
+  }
+
+  receive(artifactId: string): Promise<string[]> {
+    return new Promise((resolve, reject) => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN)
+        return reject(new Error('not connected'));
+      const timer = setTimeout(() => {
+        if (this.fetches.delete(artifactId)) reject(new Error('timed out fetching artifact'));
+      }, DEFAULT_LISTEN_TIMEOUT_MS);
+      this.fetches.set(artifactId, { chunks: [], received: 0, resolve, reject, timer });
+      this.ws.send(encodeFrame({ t: 'fetch', artifactId }));
     });
   }
 

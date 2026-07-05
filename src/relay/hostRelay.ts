@@ -337,6 +337,45 @@ export class HostRelay extends EventEmitter {
     return offer;
   }
 
+  // ---- artifact fetching --------------------------------------------------
+
+  private handleFetch(ws: WebSocket, frame: Extract<ControlFrame, { t: 'fetch' }>): void {
+    if (typeof frame.artifactId !== 'string') return;
+    this.store.evictExpired();
+    const stored = this.store.get(frame.artifactId);
+    if (!stored || !stored.complete) {
+      this.sendError(ws, 'not_found', 'artifact expired or not found', frame.artifactId);
+      return;
+    }
+    const n = stored.meta.chunkCount;
+    for (let seq = 0; seq < n; seq++) {
+      const data = this.store.chunkOf(frame.artifactId, seq) ?? '';
+      ws.send(
+        encodeFrame({
+          t: 'fetch_chunk',
+          artifactId: frame.artifactId,
+          seq,
+          data,
+          last: seq === n - 1,
+        }),
+      );
+    }
+  }
+
+  /** Host-as-receiver: read the ordered sealed chunks straight from the store. */
+  readArtifact(artifactId: string): string[] {
+    this.store.evictExpired();
+    const stored = this.store.get(artifactId);
+    if (!stored || !stored.complete) throw new Error('artifact expired or not found');
+    const out: string[] = [];
+    for (let seq = 0; seq < stored.meta.chunkCount; seq++) {
+      const c = this.store.chunkOf(artifactId, seq);
+      if (c === undefined) throw new Error('artifact upload incomplete');
+      out.push(c);
+    }
+    return out;
+  }
+
   // ---- connection handling -------------------------------------------------
 
   private onConnection(ws: WebSocket): void {
@@ -380,6 +419,8 @@ export class HostRelay extends EventEmitter {
         } else if (frame.t === 'share_end') {
           const by = this.byWs.get(ws);
           if (by) this.handleShareEnd(ws, by, frame);
+        } else if (frame.t === 'fetch') {
+          if (this.byWs.get(ws)) this.handleFetch(ws, frame);
         }
       } catch {
         /* untrusted-frame guard */

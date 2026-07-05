@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { Key, generateKey } from './protocol/crypto.js';
 import { generateTunnelId, mintInvite, parseLink } from './protocol/link.js';
@@ -14,7 +14,7 @@ import {
   RosterEntry,
   WireMessage,
 } from './protocol/messages.js';
-import { chunkAndSeal } from './protocol/artifact.js';
+import { chunkAndSeal, reassembleAndVerify } from './protocol/artifact.js';
 import type { ArtifactMeta } from './relay/artifactStore.js';
 import { SessionLog } from './log/sessionLog.js';
 import { HostRelay } from './relay/hostRelay.js';
@@ -268,6 +268,43 @@ export class TunnelSession {
     }
     const { offeredTo, olderMembers } = this.artifactAudience(sharerId);
     return { artifactId, name, size: bytes.length, kind, sha256, offeredTo, olderMembers };
+  }
+
+  async receive(
+    artifactId: string,
+    savePath: string,
+  ): Promise<{
+    savePath: string;
+    name: string;
+    kind: 'text' | 'binary';
+    size: number;
+    sha256: string;
+  }> {
+    if (!this.isOpen || !this.role || !this.key || !this.log) throw new Error('no open tunnel');
+    const offer = this.offerFor(artifactId);
+    if (!offer) throw new Error(`no such artifact offered: ${artifactId}`);
+    const sealed =
+      this.role === 'host'
+        ? this.relay!.readArtifact(artifactId)
+        : await this.member!.receive(artifactId);
+    // Untrusted bytes: verify sha256 of the plaintext BEFORE touching the disk,
+    // and write only to the receiver-chosen savePath (never the sender's name).
+    const bytes = reassembleAndVerify(sealed, this.key, offer.sha256, offer.size);
+    await writeFile(savePath, bytes);
+    return { savePath, name: offer.name, kind: offer.kind, size: offer.size, sha256: offer.sha256 };
+  }
+
+  private offerFor(artifactId: string): ArtifactOffer | undefined {
+    for (const m of this.log?.all() ?? []) {
+      if (m.kind !== 'artifact') continue;
+      try {
+        const o = JSON.parse(m.body) as ArtifactOffer;
+        if (o && o.id === artifactId) return o;
+      } catch {
+        /* skip malformed */
+      }
+    }
+    return undefined;
   }
 
   private artifactAudience(sharerId: ParticipantId): { offeredTo: number; olderMembers: number } {

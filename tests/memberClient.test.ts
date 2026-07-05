@@ -349,4 +349,31 @@ describe('MemberClient', () => {
       member.share('x', { name: 'f', kind: 'text', size: 1, sha256: 'x', chunkCount: 1 }, ['c']),
     ).rejects.toThrow('not connected');
   });
+
+  it('receive() streams sealed chunks back in order', async () => {
+    const { key, member, mkMember } = await setup();
+    await member.connect(0);
+    const receiver = mkMember('carol');
+    await receiver.connect(0);
+
+    const { chunkAndSeal, reassembleAndVerify } = await import('../src/protocol/artifact.js');
+    const bytes = new Uint8Array([10, 20, 30, 40, 50, 60, 70]);
+    const { chunks, sha256, chunkCount, kind } = chunkAndSeal(bytes, key, 3); // 3 chunks
+    await member.share(
+      'fetch-1',
+      { name: 'x.bin', kind, size: bytes.length, sha256, chunkCount },
+      chunks,
+    );
+
+    const sealed = await receiver.receive('fetch-1');
+    expect(sealed).toHaveLength(chunkCount);
+    const out = reassembleAndVerify(sealed, key, sha256, bytes.length);
+    expect(Array.from(out)).toEqual(Array.from(bytes));
+  });
+
+  it('receive() rejects with the not-found error for an unknown id', async () => {
+    const { member } = await setup();
+    await member.connect(0);
+    await expect(member.receive('never-shared')).rejects.toThrow(/artifact expired or not found/);
+  });
 });
