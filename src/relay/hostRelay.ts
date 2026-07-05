@@ -18,6 +18,8 @@ import {
   DEFAULT_JOIN_LINK_TTL_MS,
   MAX_ROOM_MEMBERS,
   PROTOCOL_VERSION,
+  MIN_PROTOCOL_VERSION,
+  ARTIFACT_PROTOCOL_VERSION,
 } from '../config.js';
 import { InviteLedger } from './inviteLedger.js';
 
@@ -34,7 +36,10 @@ const INCOMPATIBLE = 'incompatible client — upgrade: npx -y tunnel-mcp@latest'
 
 export class HostRelay extends EventEmitter {
   readonly hostId: ParticipantId = newParticipantId();
-  private members = new Map<ParticipantId, { ws: WebSocket; name: string }>();
+  private members = new Map<
+    ParticipantId,
+    { ws: WebSocket; name: string; protocolVersion: number }
+  >();
   private byWs = new WeakMap<WebSocket, ParticipantId>();
   private roster = new Map<ParticipantId, RosterEntry>();
   private ledger: InviteLedger;
@@ -54,6 +59,7 @@ export class HostRelay extends EventEmitter {
       name: opts.hostName,
       isHost: true,
       connected: true,
+      protocolVersion: PROTOCOL_VERSION,
     });
   }
 
@@ -148,8 +154,13 @@ export class HostRelay extends EventEmitter {
 
   private broadcast(frame: ControlFrame, exceptId?: ParticipantId): void {
     const data = encodeFrame(frame);
+    // Artifact offers reach v3+ members only; a v2 member never sees an unknown kind.
+    const artifactOffer = frame.t === 'msg' && frame.msg.kind === 'artifact';
     for (const [id, m] of this.members) {
-      if (id !== exceptId && m.ws.readyState === WebSocket.OPEN) m.ws.send(data);
+      if (id === exceptId) continue;
+      if (m.ws.readyState !== WebSocket.OPEN) continue;
+      if (artifactOffer && m.protocolVersion < ARTIFACT_PROTOCOL_VERSION) continue;
+      m.ws.send(data);
     }
   }
 
@@ -221,7 +232,11 @@ export class HostRelay extends EventEmitter {
       ws.close();
     };
     // v1 clients send no token/protocolVersion → incompatible, not malformed.
-    if (typeof frame.token !== 'string' || frame.protocolVersion !== PROTOCOL_VERSION) {
+    if (
+      typeof frame.token !== 'string' ||
+      typeof frame.protocolVersion !== 'number' ||
+      frame.protocolVersion < MIN_PROTOCOL_VERSION
+    ) {
       return deny(INCOMPATIBLE);
     }
     if (typeof frame.response !== 'string' || typeof frame.name !== 'string') {
@@ -241,9 +256,15 @@ export class HostRelay extends EventEmitter {
     if (verdict === 'unknown') return deny('invalid invite');
 
     this.challenges.delete(ws);
-    this.members.set(id, { ws, name: frame.name });
+    this.members.set(id, { ws, name: frame.name, protocolVersion: frame.protocolVersion });
     this.byWs.set(ws, id);
-    this.roster.set(id, { id, name: frame.name, isHost: false, connected: true });
+    this.roster.set(id, {
+      id,
+      name: frame.name,
+      isHost: false,
+      connected: true,
+      protocolVersion: frame.protocolVersion,
+    });
 
     const sinceSeq = Number.isFinite(frame.sinceSeq) ? frame.sinceSeq : 0;
     ws.send(
@@ -252,7 +273,10 @@ export class HostRelay extends EventEmitter {
         goal: this.opts.goal,
         selfId: id,
         roster: this.rosterEntries(),
-        backlog: this.log.since(sinceSeq),
+        backlog:
+          frame.protocolVersion >= ARTIFACT_PROTOCOL_VERSION
+            ? this.log.since(sinceSeq)
+            : this.log.since(sinceSeq).filter((m) => m.kind !== 'artifact'),
       }),
     );
     this.submit(buildSystem(this.hostId, `${frame.name} joined`));

@@ -56,4 +56,17 @@ export const DOH_GUEST_RETRY_DELAY_MS = 700; // backoff between guest DoH attemp
 
 // Rooms
 export const MAX_ROOM_MEMBERS = 16; // includes the host → at most 15 ws members
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
+// Oldest wire version the relay still admits. A v3 host must keep admitting v2
+// members (they simply never receive artifact messages), so this stays at 2.
+export const MIN_PROTOCOL_VERSION = 2;
+
+// Artifact sharing (0.3.0). Artifact messages are delivered only to members at
+// or above this version — a FIXED floor (not PROTOCOL_VERSION) so a future v4
+// host still delivers to v3 members.
+export const ARTIFACT_PROTOCOL_VERSION = 3;
+export const ARTIFACT_CHUNK_BYTES = 64 * 1024; // plaintext bytes per chunk
+export const MAX_ARTIFACT_BYTES = 10 * 1024 * 1024; // per-artifact plaintext cap
+export const MAX_MEMBER_ARTIFACT_BYTES = 20 * 1024 * 1024; // per-member outstanding cap
+export const MAX_ROOM_ARTIFACT_BYTES = 64 * 1024 * 1024; // room-wide store cap
+export const ARTIFACT_TTL_MS = 30 * 60 * 1000; // per-artifact TTL, or session end

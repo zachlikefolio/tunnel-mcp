@@ -5,6 +5,8 @@ import {
   keyFromBase64url,
   seal,
   open,
+  sealBytes,
+  openBytes,
   makeChallenge,
   respondChallenge,
   verifyChallenge,
@@ -99,6 +101,26 @@ describe('crypto', () => {
     const a = makeChallenge();
     const b = makeChallenge();
     expect(a).not.toBe(b);
+  });
+});
+
+describe('sealBytes/openBytes (binary-safe)', () => {
+  it('round-trips arbitrary bytes including NULs and high bytes', () => {
+    const key = generateKey();
+    const plain = new Uint8Array([0, 1, 2, 255, 254, 0, 128, 42]);
+    const sealed = sealBytes(plain, key);
+    expect(typeof sealed).toBe('string');
+    expect(Array.from(openBytes(sealed, key))).toEqual(Array.from(plain));
+  });
+  it('a tampered sealed chunk fails to open', () => {
+    const key = generateKey();
+    const sealed = sealBytes(new Uint8Array([9, 9, 9, 9]), key);
+    const flipped = (sealed[0] === 'A' ? 'B' : 'A') + sealed.slice(1);
+    expect(() => openBytes(flipped, key)).toThrow();
+  });
+  it('opening under the wrong key throws', () => {
+    const sealed = sealBytes(new Uint8Array([1, 2, 3]), generateKey());
+    expect(() => openBytes(sealed, generateKey())).toThrow('decryption failed');
   });
 });
 

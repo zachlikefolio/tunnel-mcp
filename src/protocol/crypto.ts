@@ -32,6 +32,21 @@ export function open(sealed: string, key: Key): string {
   return Buffer.from(plain).toString('utf8');
 }
 
+export function sealBytes(plaintext: Uint8Array, key: Key): string {
+  const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
+  const box = nacl.secretbox(plaintext, nonce, key);
+  return Buffer.concat([Buffer.from(nonce), Buffer.from(box)]).toString('base64url');
+}
+
+export function openBytes(sealed: string, key: Key): Uint8Array {
+  const data = Buffer.from(sealed, 'base64url');
+  const nonce = new Uint8Array(data.subarray(0, nacl.secretbox.nonceLength));
+  const box = new Uint8Array(data.subarray(nacl.secretbox.nonceLength));
+  const plain = nacl.secretbox.open(box, nonce, key);
+  if (!plain) throw new Error('decryption failed');
+  return plain;
+}
+
 export function makeChallenge(): string {
   return crypto.randomBytes(32).toString('base64url');
 }

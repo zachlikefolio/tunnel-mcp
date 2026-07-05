@@ -21,6 +21,13 @@ import {
   DOH_GUEST_RETRY_DELAY_MS,
   MAX_ROOM_MEMBERS,
   PROTOCOL_VERSION,
+  ARTIFACT_CHUNK_BYTES,
+  MAX_ARTIFACT_BYTES,
+  MAX_MEMBER_ARTIFACT_BYTES,
+  MAX_ROOM_ARTIFACT_BYTES,
+  ARTIFACT_TTL_MS,
+  MIN_PROTOCOL_VERSION,
+  ARTIFACT_PROTOCOL_VERSION,
 } from '../src/config.js';
 
 describe('config', () => {
@@ -91,6 +98,13 @@ describe('config', () => {
       DOH_GUEST_RETRY_DELAY_MS,
       MAX_ROOM_MEMBERS,
       PROTOCOL_VERSION,
+      ARTIFACT_CHUNK_BYTES,
+      MAX_ARTIFACT_BYTES,
+      MAX_MEMBER_ARTIFACT_BYTES,
+      MAX_ROOM_ARTIFACT_BYTES,
+      ARTIFACT_TTL_MS,
+      MIN_PROTOCOL_VERSION,
+      ARTIFACT_PROTOCOL_VERSION,
     ];
     for (const value of numericConstants) {
       expect(typeof value).toBe('number');
@@ -101,6 +115,17 @@ describe('config', () => {
 
   it('exposes room constants', () => {
     expect(MAX_ROOM_MEMBERS).toBe(16);
-    expect(PROTOCOL_VERSION).toBe(2);
+    expect(PROTOCOL_VERSION).toBe(3);
+  });
+
+  it('exposes artifact + protocol constants', () => {
+    expect(ARTIFACT_CHUNK_BYTES).toBe(64 * 1024);
+    expect(MAX_ARTIFACT_BYTES).toBe(10 * 1024 * 1024);
+    expect(MAX_MEMBER_ARTIFACT_BYTES).toBe(20 * 1024 * 1024);
+    expect(MAX_ROOM_ARTIFACT_BYTES).toBe(64 * 1024 * 1024);
+    expect(ARTIFACT_TTL_MS).toBe(30 * 60 * 1000);
+    expect(PROTOCOL_VERSION).toBe(3);
+    expect(MIN_PROTOCOL_VERSION).toBe(2);
+    expect(ARTIFACT_PROTOCOL_VERSION).toBe(3);
   });
 });

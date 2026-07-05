@@ -3,6 +3,7 @@ import { generateKey } from '../src/protocol/crypto.js';
 import {
   buildChat,
   buildSystem,
+  buildArtifactMessage,
   decrypt,
   encodeFrame,
   decodeFrame,
@@ -190,5 +191,31 @@ describe('messages', () => {
       expect(decoded).toEqual(frame);
       if (decoded.t === 'send') expect(decrypt(decoded.msg, key).text).toBe('outgoing');
     });
+  });
+});
+
+describe('artifact messages', () => {
+  it('buildArtifactMessage carries the offer JSON as a plaintext body of kind artifact', () => {
+    const from = newParticipantId();
+    const offer = {
+      id: 'aid1',
+      name: 'trace.log',
+      kind: 'text' as const,
+      size: 142,
+      sha256: 'deadbeef',
+      from,
+    };
+    const m = buildArtifactMessage(from, offer);
+    expect(m.kind).toBe('artifact');
+    expect(m.from).toBe(from);
+    expect(JSON.parse(m.body)).toEqual(offer);
+  });
+  it('decrypt passes an artifact body through unchanged (metadata is plaintext)', () => {
+    const key = generateKey();
+    const from = newParticipantId();
+    const offer = { id: 'a', name: 'f', kind: 'binary' as const, size: 9, sha256: 'x', from };
+    const pm = decrypt(buildArtifactMessage(from, offer), key);
+    expect(pm.kind).toBe('artifact');
+    expect(JSON.parse(pm.text)).toEqual(offer);
   });
 });

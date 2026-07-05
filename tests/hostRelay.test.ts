@@ -7,7 +7,13 @@ import { HostRelay } from '../src/relay/hostRelay.js';
 import { SessionLog } from '../src/log/sessionLog.js';
 import { generateKey, respondChallenge, generateToken } from '../src/protocol/crypto.js';
 import { generateTunnelId } from '../src/protocol/link.js';
-import { decodeFrame, encodeFrame, ControlFrame, buildSystem } from '../src/protocol/messages.js';
+import {
+  decodeFrame,
+  encodeFrame,
+  ControlFrame,
+  buildSystem,
+  buildArtifactMessage,
+} from '../src/protocol/messages.js';
 
 const INCOMPATIBLE = 'incompatible client — upgrade: npx -y tunnel-mcp@latest';
 
@@ -533,5 +539,126 @@ describe('HostRelay rooms', () => {
     const entry = relay!.rosterEntries().find((r) => r.name === 'leaver');
     expect(entry).toBeDefined();
     expect(entry!.connected).toBe(false); // roster RETAINS departed members
+  });
+});
+
+describe('HostRelay artifact-message delivery + v2 compat', () => {
+  // Auth a raw socket at an arbitrary protocolVersion; resolve after auth_ok.
+  async function joinAt(
+    url: string,
+    key: Uint8Array,
+    token: string,
+    name: string,
+    protocolVersion: number,
+  ): Promise<{ ws: WebSocket; next: () => Promise<ControlFrame> }> {
+    const { ws, next } = connect(url);
+    await waitForOpen(ws);
+    const challenge = await next();
+    if (challenge.t !== 'challenge') throw new Error('expected challenge');
+    ws.send(
+      encodeFrame({
+        t: 'auth',
+        response: respondChallenge(challenge.nonce, key),
+        name,
+        sinceSeq: 0,
+        token,
+        protocolVersion,
+      }),
+    );
+    const ok = await next();
+    if (ok.t !== 'auth_ok') throw new Error(`expected auth_ok, got ${ok.t}`);
+    return { ws, next };
+  }
+
+  // Same handshake, but returns the auth_ok frame itself (so callers can
+  // inspect .backlog) instead of discarding it.
+  async function joinAtWithAuthOk(
+    url: string,
+    key: Uint8Array,
+    token: string,
+    name: string,
+    protocolVersion: number,
+  ): Promise<{
+    ws: WebSocket;
+    next: () => Promise<ControlFrame>;
+    authOk: Extract<ControlFrame, { t: 'auth_ok' }>;
+  }> {
+    const { ws, next } = connect(url);
+    await waitForOpen(ws);
+    const challenge = await next();
+    if (challenge.t !== 'challenge') throw new Error('expected challenge');
+    ws.send(
+      encodeFrame({
+        t: 'auth',
+        response: respondChallenge(challenge.nonce, key),
+        name,
+        sinceSeq: 0,
+        token,
+        protocolVersion,
+      }),
+    );
+    const ok = await next();
+    if (ok.t !== 'auth_ok') throw new Error(`expected auth_ok, got ${ok.t}`);
+    return { ws, next, authOk: ok };
+  }
+
+  it('still admits a v2 (protocolVersion 2) client against a v3 host', async () => {
+    const { key, url } = await makeRelay();
+    const token = relay!.mintInvites(1)[0].token;
+    const m = await joinAt(url, key, token, 'legacy', 2);
+    expect(relay!.connectedMembers()).toBe(1);
+    // drain the "legacy joined" system message
+    const sys = await waitFrame(m.next, (f) => f.t === 'msg');
+    if (sys.t === 'msg') expect(sys.msg.kind).toBe('system');
+  });
+
+  it('delivers an artifact message to a v3 member but never to a v2 member (live)', async () => {
+    const { key, url } = await makeRelay();
+    const [t2, t3] = relay!.mintInvites(2).map((i) => i.token);
+    const v2 = await joinAt(url, key, t2, 'old', 2);
+    const v3 = await joinAt(url, key, t3, 'new', 3);
+
+    const offer = {
+      id: 'art-live',
+      name: 'f.bin',
+      kind: 'binary' as const,
+      size: 5,
+      sha256: 'abc',
+      from: relay!.hostId,
+    };
+    relay!.submitLocal(buildArtifactMessage(relay!.hostId, offer));
+
+    // v3 receives the artifact msg…
+    const got = await waitFrame(v3.next, (f) => f.t === 'msg' && f.msg.kind === 'artifact');
+    if (got.t === 'msg') expect(JSON.parse(got.msg.body).id).toBe('art-live');
+
+    // …and the v2 member never does (only its own chat echo would arrive; here none).
+    const raced = await Promise.race([
+      v2.next().then((f) => ({ arrived: true as const, frame: f })),
+      new Promise<{ arrived: false }>((r) => setTimeout(() => r({ arrived: false }), 150)),
+    ]);
+    if (raced.arrived) expect(raced.frame.t === 'msg' && raced.frame.msg.kind).not.toBe('artifact');
+    else expect(raced.arrived).toBe(false);
+  });
+
+  it('excludes artifact messages from a v2 late-joiner backlog but includes them for v3', async () => {
+    const { key, url } = await makeRelay();
+    relay!.submitLocal(
+      buildArtifactMessage(relay!.hostId, {
+        id: 'art-backlog',
+        name: 'f',
+        kind: 'text',
+        size: 3,
+        sha256: 'x',
+        from: relay!.hostId,
+      }),
+    );
+
+    const [t2, t3] = relay!.mintInvites(2).map((i) => i.token);
+    const { authOk: okV2 } = await joinAtWithAuthOk(url, key, t2, 'old', 2);
+    expect(okV2.backlog.some((m) => m.kind === 'artifact')).toBe(false);
+
+    const { authOk: okV3 } = await joinAtWithAuthOk(url, key, t3, 'new', 3);
+    expect(okV3.backlog.some((m) => m.kind === 'artifact')).toBe(true);
   });
 });
