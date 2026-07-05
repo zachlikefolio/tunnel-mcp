@@ -70,3 +70,11 @@ export const MAX_ARTIFACT_BYTES = 10 * 1024 * 1024; // per-artifact plaintext ca
 export const MAX_MEMBER_ARTIFACT_BYTES = 20 * 1024 * 1024; // per-member outstanding cap
 export const MAX_ROOM_ARTIFACT_BYTES = 64 * 1024 * 1024; // room-wide store cap
 export const ARTIFACT_TTL_MS = 30 * 60 * 1000; // per-artifact TTL, or session end
+
+// A sealed chunk on the wire is base64url(nonce(24) + secretbox(plaintext, 16-byte
+// tag)). A well-formed chunk's plaintext never exceeds ARTIFACT_CHUNK_BYTES, so its
+// sealed (decoded) form never exceeds ARTIFACT_CHUNK_BYTES + nonce + tag. We allow a
+// small fixed cushion beyond the actual 40-byte overhead so this bound can't produce
+// false positives, while still being tight enough to close the unbounded-chunk gap.
+export const SEALED_CHUNK_OVERHEAD_BYTES = 64; // >= nonce(24) + secretbox tag(16)
+export const MAX_SEALED_CHUNK_BYTES = ARTIFACT_CHUNK_BYTES + SEALED_CHUNK_OVERHEAD_BYTES;
