@@ -288,8 +288,11 @@ describe('MemberClient', () => {
     await receiver.connect(0);
 
     const { chunkAndSeal } = await import('../src/protocol/artifact.js');
+    const { ARTIFACT_CHUNK_BYTES } = await import('../src/config.js');
     const bytes = new Uint8Array([1, 2, 3, 4, 5]);
-    const { chunks, sha256, chunkCount, kind } = chunkAndSeal(bytes, key, 2);
+    // Real chunk size: the store now bounds chunkCount to ceil(size/ARTIFACT_CHUNK_BYTES),
+    // matching what chunkAndSeal actually produces on the real upload path.
+    const { chunks, sha256, chunkCount, kind } = chunkAndSeal(bytes, key, ARTIFACT_CHUNK_BYTES);
     const artifactId = 'share-1';
     const meta = { name: 'note.bin', kind, size: bytes.length, sha256, chunkCount };
 
@@ -357,8 +360,11 @@ describe('MemberClient', () => {
     await receiver.connect(0);
 
     const { chunkAndSeal, reassembleAndVerify } = await import('../src/protocol/artifact.js');
-    const bytes = new Uint8Array([10, 20, 30, 40, 50, 60, 70]);
-    const { chunks, sha256, chunkCount, kind } = chunkAndSeal(bytes, key, 3); // 3 chunks
+    const { ARTIFACT_CHUNK_BYTES } = await import('../src/config.js');
+    // Real chunk size, spanning two real chunks (ceil((64KB+37)/64KB) === 2) so
+    // this exercises the actual multi-chunk fetch path, not a synthetic one.
+    const bytes = new Uint8Array(ARTIFACT_CHUNK_BYTES + 37).map((_, i) => (i * 3) % 256);
+    const { chunks, sha256, chunkCount, kind } = chunkAndSeal(bytes, key, ARTIFACT_CHUNK_BYTES);
     await member.share(
       'fetch-1',
       { name: 'x.bin', kind, size: bytes.length, sha256, chunkCount },
@@ -369,6 +375,84 @@ describe('MemberClient', () => {
     expect(sealed).toHaveLength(chunkCount);
     const out = reassembleAndVerify(sealed, key, sha256, bytes.length);
     expect(Array.from(out)).toEqual(Array.from(bytes));
+  });
+
+  it('receive() rejects cleanly (not a TypeError) when a middle chunk is missing before last:true', async () => {
+    // Simulates a malformed/malicious relay: sends seq 0, SKIPS seq 1, then
+    // sends seq 2 with last:true. The old `.some(c => c === undefined)` check
+    // silently skips the hole at index 1 (Array.prototype.some never visits
+    // holes) and would hand a holey array to reassembleAndVerify, which throws
+    // a raw TypeError. The fix must reject cleanly instead.
+    const { WebSocketServer } = await import('ws');
+    const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await new Promise<void>((r) => wss.once('listening', () => r()));
+    const port = (wss.address() as { port: number }).port;
+    const hostId = 'aabbccddeeff0011';
+    const selfId = 'deadbeefcafebabe';
+
+    let hostSock: import('ws').WebSocket | undefined;
+    wss.on('connection', (sock) => {
+      hostSock = sock;
+      sock.send(JSON.stringify({ t: 'challenge', nonce: 'hole-nonce' }));
+      sock.on('message', (data) => {
+        const frame = JSON.parse(data.toString());
+        if (frame.t === 'auth') {
+          sock.send(
+            JSON.stringify({
+              t: 'auth_ok',
+              goal: 'hole test',
+              selfId,
+              roster: [
+                { id: selfId, name: 'bob', isHost: false, connected: true },
+                { id: hostId, name: 'alice', isHost: true, connected: true },
+              ],
+              backlog: [],
+            }),
+          );
+        } else if (frame.t === 'fetch') {
+          sock.send(
+            JSON.stringify({
+              t: 'fetch_chunk',
+              artifactId: frame.artifactId,
+              seq: 0,
+              data: 'c0',
+              last: false,
+            }),
+          );
+          // seq 1 deliberately never sent
+          sock.send(
+            JSON.stringify({
+              t: 'fetch_chunk',
+              artifactId: frame.artifactId,
+              seq: 2,
+              data: 'c2',
+              last: true,
+            }),
+          );
+        }
+      });
+    });
+
+    const link = parseLink(
+      mintInvite(`http://127.0.0.1:${port}`, generateTunnelId(), generateKey(), generateToken()),
+    );
+    const memberLog = new SessionLog(generateTunnelId());
+    const member = new MemberClient(link, 'bob', memberLog, {
+      handshakeTimeoutMs: 2000,
+      connectDeadlineMs: 3000,
+    });
+
+    try {
+      await member.connect(0);
+      if (!hostSock) throw new Error('test bug: host never saw the connection');
+      await expect(member.receive('holey-artifact')).rejects.toThrow(
+        'incomplete artifact transfer',
+      );
+    } finally {
+      member.close();
+      wss.close();
+      memberLog.delete();
+    }
   });
 
   it('receive() rejects with the not-found error for an unknown id', async () => {

@@ -17,8 +17,18 @@ import {
   GUEST_HANDSHAKE_TIMEOUT_MS,
   GUEST_CONNECT_DEADLINE_MS,
   PROTOCOL_VERSION,
+  MAX_ARTIFACT_BYTES,
+  ARTIFACT_CHUNK_BYTES,
 } from '../config.js';
 import { makeGuestLookup } from './guestLookup.js';
+
+// A legitimate artifact never has more chunks than the largest allowed upload
+// could produce (mirrors ArtifactStore.begin()'s bound on the relay side). The
+// host relay is untrusted from the member's point of view, so a `fetch_chunk`
+// seq is bounded by this before it ever indexes into the chunks array — closing
+// off an absurd seq (e.g. near Number.MAX_SAFE_INTEGER) growing that array
+// without bound.
+const MAX_FETCH_CHUNK_COUNT = Math.ceil(MAX_ARTIFACT_BYTES / ARTIFACT_CHUNK_BYTES);
 
 export interface GuestNetOptions {
   handshakeTimeoutMs?: number;
@@ -42,7 +52,8 @@ export class MemberClient extends EventEmitter {
     string,
     {
       chunks: (string | undefined)[];
-      received: number;
+      receivedCount: number; // count of DISTINCT seqs filled so far (dedup on resend)
+      maxSeq: number; // highest seq seen so far; -1 = none yet
       resolve: (chunks: string[]) => void;
       reject: (e: Error) => void;
       timer: NodeJS.Timeout;
@@ -177,17 +188,42 @@ export class MemberClient extends EventEmitter {
             if (typeof frame.artifactId !== 'string') return;
             const f = this.fetches.get(frame.artifactId);
             if (!f) return;
-            if (typeof frame.seq === 'number' && frame.seq >= 0 && typeof frame.data === 'string') {
+            if (
+              typeof frame.seq === 'number' &&
+              Number.isInteger(frame.seq) &&
+              frame.seq >= 0 &&
+              frame.seq < MAX_FETCH_CHUNK_COUNT &&
+              typeof frame.data === 'string'
+            ) {
+              if (f.chunks[frame.seq] === undefined) f.receivedCount++;
               f.chunks[frame.seq] = frame.data;
-              f.received++;
+              if (frame.seq > f.maxSeq) f.maxSeq = frame.seq;
             }
             if (frame.last === true) {
               clearTimeout(f.timer);
               this.fetches.delete(frame.artifactId);
-              if (f.chunks.length === 0 || f.chunks.some((c) => c === undefined)) {
+              // The offer doesn't carry chunkCount, so the expected total isn't
+              // known up front; a legitimate stream's `last` frame always carries
+              // the highest seq (0..n-1, last on n-1), so maxSeq + 1 IS that total.
+              // Checking the distinct-seq COUNT against it, then walking 0..maxSeq
+              // with an explicit loop (never `.some` on the sparse array, which
+              // silently skips holes), catches a relay that drops a middle chunk
+              // yet still sends `last:true` — the old check let that through and
+              // crashed reassembleAndVerify with a raw TypeError instead of this
+              // clean rejection.
+              let complete = f.maxSeq >= 0 && f.receivedCount === f.maxSeq + 1;
+              if (complete) {
+                for (let i = 0; i <= f.maxSeq; i++) {
+                  if (f.chunks[i] === undefined) {
+                    complete = false;
+                    break;
+                  }
+                }
+              }
+              if (!complete) {
                 f.reject(new Error('incomplete artifact transfer'));
               } else {
-                f.resolve(f.chunks as string[]);
+                f.resolve(f.chunks.slice(0, f.maxSeq + 1) as string[]);
               }
             }
           }
@@ -275,7 +311,14 @@ export class MemberClient extends EventEmitter {
       const timer = setTimeout(() => {
         if (this.fetches.delete(artifactId)) reject(new Error('timed out fetching artifact'));
       }, DEFAULT_LISTEN_TIMEOUT_MS);
-      this.fetches.set(artifactId, { chunks: [], received: 0, resolve, reject, timer });
+      this.fetches.set(artifactId, {
+        chunks: [],
+        receivedCount: 0,
+        maxSeq: -1,
+        resolve,
+        reject,
+        timer,
+      });
       this.ws.send(encodeFrame({ t: 'fetch', artifactId }));
     });
   }

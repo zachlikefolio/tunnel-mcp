@@ -436,14 +436,16 @@ describe('fuzz: artifact frames through the real relay + member handlers', () =>
     );
     fc.assert(
       fc.property(fc.integer(), (seq) => {
+        // size:4 legitimately allows only chunkCount:1 (ceil(4/ARTIFACT_CHUNK_BYTES)
+        // === 1), so the only in-range seq is 0.
         s.begin(
           'putfuzz',
-          { name: 'f', kind: 'binary', size: 4, sha256: 'x', chunkCount: 2 },
+          { name: 'f', kind: 'binary', size: 4, sha256: 'x', chunkCount: 1 },
           'm2',
         );
         const r = s.putChunk('putfuzz', seq, 'data');
         s.evict('putfuzz');
-        return r === 'ok' ? seq === 0 || seq === 1 : true;
+        return r === 'ok' ? seq === 0 : true;
       }),
       { numRuns: 500 },
     );

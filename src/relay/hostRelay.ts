@@ -198,11 +198,13 @@ export class HostRelay extends EventEmitter {
   // ('too_large' | 'member_full' | 'room_full' | 'duplicate' | 'not_found' |
   // 'unknown' | 'bad_seq' | 'incomplete') are mapped so the wire code is always
   // a member of that enum. `bad_meta` (invalid declared size/chunkCount) has no
-  // dedicated wire code, so it surfaces as the generic 'unknown'; `duplicate_chunk`
-  // maps to 'duplicate'.
+  // dedicated wire code, so it surfaces as the generic 'unknown'.
+  //
+  // NB: this is only ever called on store.begin() results (handleShareBegin,
+  // ingestArtifact) — never on putChunk()'s, so `duplicate_chunk` (a putChunk-only
+  // code) never reaches here and has no case below.
   private toWireCode(code: string): string {
     if (code === 'bad_meta') return 'unknown';
-    if (code === 'duplicate_chunk') return 'duplicate';
     return code;
   }
 
@@ -253,6 +255,7 @@ export class HostRelay extends EventEmitter {
 
   private handleShareChunk(
     ws: WebSocket,
+    by: ParticipantId,
     frame: Extract<ControlFrame, { t: 'share_chunk' }>,
   ): void {
     if (
@@ -262,7 +265,11 @@ export class HostRelay extends EventEmitter {
     ) {
       return;
     }
-    const res = this.store.putChunk(frame.artifactId, frame.seq, frame.data);
+    // Ownership: a member can only push chunks into an upload they themselves
+    // began (defense-in-depth against a member referencing another member's
+    // in-flight artifactId — the mismatch surfaces as the same 'unknown' a
+    // nonexistent id would, never confirming existence to a non-owner).
+    const res = this.store.putChunk(frame.artifactId, frame.seq, frame.data, by);
     // 'unknown'/'bad_seq' are reported so a client learns it targeted the wrong
     // upload; cap failures (too_large/member_full/room_full/duplicate_chunk) drop
     // the chunk silently — the missing chunk then surfaces as 'incomplete' at
@@ -283,7 +290,9 @@ export class HostRelay extends EventEmitter {
     frame: Extract<ControlFrame, { t: 'share_end' }>,
   ): void {
     if (typeof frame.artifactId !== 'string') return;
-    const res = this.store.end(frame.artifactId);
+    // Ownership: only the member who began the upload may finalize it (same
+    // rationale as handleShareChunk).
+    const res = this.store.end(frame.artifactId, by);
     if (res !== 'ok') {
       this.store.evict(frame.artifactId); // a lying/incomplete upload never lingers
       this.sendError(
@@ -319,9 +328,9 @@ export class HostRelay extends EventEmitter {
     const res = this.store.begin(artifactId, meta, by);
     if (res !== 'ok') throw new Error(this.capMessage(this.toWireCode(res)));
     for (let seq = 0; seq < sealedChunks.length; seq++) {
-      this.store.putChunk(artifactId, seq, sealedChunks[seq]);
+      this.store.putChunk(artifactId, seq, sealedChunks[seq], by);
     }
-    if (this.store.end(artifactId) !== 'ok') {
+    if (this.store.end(artifactId, by) !== 'ok') {
       this.store.evict(artifactId);
       throw new Error('artifact upload incomplete');
     }
@@ -415,7 +424,8 @@ export class HostRelay extends EventEmitter {
           const by = this.byWs.get(ws);
           if (by) this.handleShareBegin(ws, by, frame);
         } else if (frame.t === 'share_chunk') {
-          if (this.byWs.get(ws)) this.handleShareChunk(ws, frame);
+          const chunkBy = this.byWs.get(ws);
+          if (chunkBy) this.handleShareChunk(ws, chunkBy, frame);
         } else if (frame.t === 'share_end') {
           const by = this.byWs.get(ws);
           if (by) this.handleShareEnd(ws, by, frame);

@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ArtifactStore } from '../src/relay/artifactStore.js';
+import { chunkAndSeal } from '../src/protocol/artifact.js';
+import { generateKey } from '../src/protocol/crypto.js';
 import { ARTIFACT_CHUNK_BYTES, MAX_SEALED_CHUNK_BYTES } from '../src/config.js';
 
 const opts = { maxArtifactBytes: 1000, maxMemberBytes: 1500, maxRoomBytes: 2000, ttlMs: 1000 };
@@ -17,22 +19,67 @@ const sealedOf = (n: number) => Buffer.alloc(n, 7).toString('base64url');
 describe('ArtifactStore', () => {
   it('buffers chunks and completes a valid upload', () => {
     const s = new ArtifactStore(opts);
-    expect(s.begin('a', meta(6, 2), 'm1', 0)).toBe('ok');
+    expect(s.begin('a', meta(6, 1), 'm1', 0)).toBe('ok');
     expect(s.putChunk('a', 0, 'c0')).toBe('ok');
-    expect(s.putChunk('a', 1, 'c1')).toBe('ok');
     expect(s.end('a')).toBe('ok');
     expect(s.chunkOf('a', 0)).toBe('c0');
-    expect(s.chunkOf('a', 1)).toBe('c1');
     expect(s.get('a')?.complete).toBe(true);
   });
 
   it('rejects a duplicate id, oversized artifact, and bad meta', () => {
     const s = new ArtifactStore(opts);
-    expect(s.begin('a', meta(6, 2), 'm1', 0)).toBe('ok');
-    expect(s.begin('a', meta(6, 2), 'm1', 0)).toBe('duplicate');
+    expect(s.begin('a', meta(6, 1), 'm1', 0)).toBe('ok');
+    expect(s.begin('a', meta(6, 1), 'm1', 0)).toBe('duplicate');
     expect(s.begin('big', meta(1001, 1), 'm1', 0)).toBe('too_large');
     expect(s.begin('z', meta(0, 0), 'm1', 0)).toBe('bad_meta');
     expect(s.begin('z', meta(6, 0), 'm1', 0)).toBe('bad_meta');
+    // chunkCount above ceil(size / ARTIFACT_CHUNK_BYTES) — the most a real
+    // chunkAndSeal upload could ever produce for this size — is bad_meta too.
+    expect(s.begin('z2', meta(6, 2), 'm1', 0)).toBe('bad_meta');
+  });
+
+  it('rejects a chunkCount far above ceil(size/chunkBytes) as bad_meta, and never allocates', () => {
+    const s = new ArtifactStore(opts);
+    // Straight from the review: size=1000 legitimately needs only 1 chunk
+    // (ceil(1000/65536) === 1); a declared chunkCount of 1,000,000 is ~1,000,000x
+    // looser than that.
+    expect(s.begin('amp', meta(1000, 1_000_000), 'm1', 0)).toBe('bad_meta');
+    expect(s.get('amp')).toBeUndefined();
+
+    // Harder proof that the array is never allocated: `new Array(n)` throws
+    // RangeError('Invalid array length') for n > 2**32 - 1. If the chunkCount
+    // bound were ever bypassed (or checked after allocation), this call would
+    // throw synchronously instead of cleanly returning 'bad_meta'.
+    let result: string | undefined;
+    expect(() => {
+      result = s.begin('amp2', meta(1000, 5_000_000_000), 'm1', 0);
+    }).not.toThrow();
+    expect(result).toBe('bad_meta');
+    expect(s.get('amp2')).toBeUndefined();
+  });
+
+  it('a real chunkAndSeal multi-chunk upload begins ok and round-trips through end()', () => {
+    // Verifies the bound formula against chunkAndSeal's ACTUAL output (not a
+    // hand-picked meta) so a legitimate upload is never rejected.
+    const key = generateKey();
+    const bytes = new Uint8Array(ARTIFACT_CHUNK_BYTES * 2 + 777).map((_, i) => (i * 13) % 256);
+    const { chunks, sha256, chunkCount, kind } = chunkAndSeal(bytes, key, ARTIFACT_CHUNK_BYTES);
+    expect(chunkCount).toBe(3); // ceil((2*64KB + 777) / 64KB)
+    const roomy = {
+      maxArtifactBytes: 20_000_000,
+      maxMemberBytes: 20_000_000,
+      maxRoomBytes: 20_000_000,
+      ttlMs: 1000,
+    };
+    const s = new ArtifactStore(roomy);
+    expect(
+      s.begin('real', { name: 'f', kind, size: bytes.length, sha256, chunkCount }, 'm1', 0),
+    ).toBe('ok');
+    for (let i = 0; i < chunks.length; i++) {
+      expect(s.putChunk('real', i, chunks[i])).toBe('ok');
+    }
+    expect(s.end('real')).toBe('ok');
+    expect(s.get('real')?.complete).toBe(true);
   });
 
   it('enforces per-member and room caps against reserved size', () => {
@@ -47,17 +94,39 @@ describe('ArtifactStore', () => {
 
   it('rejects unknown id, out-of-range seq, and duplicate chunk', () => {
     const s = new ArtifactStore(opts);
-    s.begin('a', meta(6, 2), 'm1', 0);
+    s.begin('a', meta(6, 1), 'm1', 0);
     expect(s.putChunk('nope', 0, 'x')).toBe('unknown');
     expect(s.putChunk('a', -1, 'x')).toBe('bad_seq');
-    expect(s.putChunk('a', 2, 'x')).toBe('bad_seq');
+    expect(s.putChunk('a', 1, 'x')).toBe('bad_seq');
     expect(s.putChunk('a', 0, 'x')).toBe('ok');
     expect(s.putChunk('a', 0, 'y')).toBe('duplicate_chunk');
   });
 
-  it('end() is incomplete until every chunk arrives; unknown for a missing id', () => {
+  it('rejects putChunk/end from a caller that does not own the artifact', () => {
     const s = new ArtifactStore(opts);
-    s.begin('a', meta(6, 2), 'm1', 0);
+    expect(s.begin('a', meta(6, 1), 'm1', 0)).toBe('ok');
+    // Member 'm2' references member 'm1's artifactId — neither call may succeed.
+    expect(s.putChunk('a', 0, 'x', 'm2')).toBe('unknown');
+    expect(s.get('a')?.actualBytes).toBe(0);
+    expect(s.end('a', 'm2')).toBe('unknown');
+    expect(s.get('a')?.complete).toBe(false);
+    // The actual owner can still do both.
+    expect(s.putChunk('a', 0, 'x', 'm1')).toBe('ok');
+    expect(s.end('a', 'm1')).toBe('ok');
+    // Callers that don't pass `by` at all are unaffected (backward compatible).
+    expect(s.putChunk('unknown-id', 0, 'x')).toBe('unknown');
+  });
+
+  it('end() is incomplete until every chunk arrives; unknown for a missing id', () => {
+    const bigOpts = {
+      maxArtifactBytes: 200_000,
+      maxMemberBytes: 300_000,
+      maxRoomBytes: 400_000,
+      ttlMs: 1000,
+    };
+    const s = new ArtifactStore(bigOpts);
+    const size = ARTIFACT_CHUNK_BYTES + 6; // ceil = 2 real chunks
+    s.begin('a', meta(size, 2), 'm1', 0);
     s.putChunk('a', 0, 'c0');
     expect(s.end('a')).toBe('incomplete');
     s.putChunk('a', 1, 'c1');

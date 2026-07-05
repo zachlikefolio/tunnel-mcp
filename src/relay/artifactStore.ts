@@ -1,5 +1,9 @@
 import type { ParticipantId } from '../protocol/messages.js';
-import { MAX_SEALED_CHUNK_BYTES, SEALED_CHUNK_OVERHEAD_BYTES } from '../config.js';
+import {
+  ARTIFACT_CHUNK_BYTES,
+  MAX_SEALED_CHUNK_BYTES,
+  SEALED_CHUNK_OVERHEAD_BYTES,
+} from '../config.js';
 
 // Cheap pre-check on the *encoded* string length, applied before Buffer.from ever
 // touches the bytes, so an attacker can't force a large decode allocation just to
@@ -54,12 +58,16 @@ export class ArtifactStore {
   ): 'ok' | 'too_large' | 'duplicate' | 'member_full' | 'room_full' | 'bad_meta' {
     if (this.artifacts.has(artifactId)) return 'duplicate';
     if (!Number.isInteger(meta.size) || meta.size < 1) return 'bad_meta';
-    // chunkCount is bounded by size (chunkAndSeal never emits an empty chunk, so a
-    // legitimate upload can never have more chunks than plaintext bytes). Without
-    // this, an attacker-declared chunkCount near Number.MAX_SAFE_INTEGER/2^31 with
-    // a tiny declared size sails past the size cap below and crashes the process
-    // via `new Array(meta.chunkCount)` a few lines down (V8 OOM abort — reproduced).
-    if (!Number.isInteger(meta.chunkCount) || meta.chunkCount < 1 || meta.chunkCount > meta.size) {
+    // chunkCount must match what a legitimate upload can ever produce: chunkAndSeal
+    // (src/protocol/artifact.ts) always emits exactly ceil(size / ARTIFACT_CHUNK_BYTES)
+    // chunks — never more, never fewer. The old bound (chunkCount <= size) was ~65,536x
+    // looser than that: a declared size of 10MB permitted a declared chunkCount up to
+    // 10,000,000, forcing `new Array(meta.chunkCount)` a few lines down to allocate an
+    // ~84MB pointer-slot array while only 10MB was reserved against the caps below —
+    // and near Number.MAX_SAFE_INTEGER/2^32 that allocation is a process-OOM abort
+    // (reproduced). Bounding chunkCount to the real ceiling closes both.
+    const maxChunks = Math.ceil(meta.size / ARTIFACT_CHUNK_BYTES);
+    if (!Number.isInteger(meta.chunkCount) || meta.chunkCount < 1 || meta.chunkCount > maxChunks) {
       return 'bad_meta';
     }
     if (meta.size > this.opts.maxArtifactBytes) return 'too_large';
@@ -81,9 +89,17 @@ export class ArtifactStore {
     artifactId: string,
     seq: number,
     data: string,
+    by?: ParticipantId,
   ): 'ok' | 'unknown' | 'bad_seq' | 'duplicate_chunk' | 'too_large' | 'member_full' | 'room_full' {
     const a = this.artifacts.get(artifactId);
     if (!a) return 'unknown';
+    // Ownership: a member who somehow references another member's in-flight
+    // artifactId must not be able to inject chunks into it. Reporting 'unknown'
+    // (rather than a dedicated "forbidden" code) also avoids confirming to a
+    // non-owner that the id exists at all. `by` is optional so existing internal
+    // callers that already know they own the artifact (e.g. ingestArtifact) don't
+    // have to change.
+    if (by !== undefined && a.by !== by) return 'unknown';
     if (!Number.isInteger(seq) || seq < 0 || seq >= a.meta.chunkCount) return 'bad_seq';
     if (a.chunks[seq] !== undefined) return 'duplicate_chunk';
 
@@ -112,9 +128,12 @@ export class ArtifactStore {
     return 'ok';
   }
 
-  end(artifactId: string): 'ok' | 'unknown' | 'incomplete' {
+  end(artifactId: string, by?: ParticipantId): 'ok' | 'unknown' | 'incomplete' {
     const a = this.artifacts.get(artifactId);
     if (!a) return 'unknown';
+    // Same ownership check as putChunk: a non-owner can't force-terminate (and
+    // thus offer) someone else's in-flight upload.
+    if (by !== undefined && a.by !== by) return 'unknown';
     if (a.received !== a.meta.chunkCount || a.chunks.some((c) => c === undefined)) {
       return 'incomplete';
     }
